@@ -20,11 +20,22 @@ import { createIdAllocator } from '../wire/ids';
 export interface SseSink<TEvents extends Record<string, unknown> = Record<string, unknown>> {
   /**
    * Emit a named event. Auto-monotonic id unless explicit `id` provided.
-   * No-op after close.
+   * Data is JSON-stringified. No-op after close.
    */
   event<K extends keyof TEvents & string>(
     name: K,
     data: TEvents[K],
+    opts?: { id?: number | string }
+  ): void;
+
+  /**
+   * Emit a named event with pre-formatted string data (NO JSON.stringify wrap).
+   * Use for line-streaming or raw-text protocols (e.g. LLM token deltas).
+   * For most cases prefer `event()` — this is the escape hatch.
+   */
+  eventRaw(
+    name: string,
+    data: string,
     opts?: { id?: number | string }
   ): void;
 
@@ -184,6 +195,11 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
       if (closed) return;
       const id = eventOpts?.id ?? ids.next();
       enqueue(encodeFrame({ id, event: name, data: JSON.stringify(data) }));
+    },
+    eventRaw(name, data, eventOpts) {
+      if (closed) return;
+      const id = eventOpts?.id ?? ids.next();
+      enqueue(encodeFrame({ id, event: name, data }));
     },
     comment(text) {
       if (closed) return;

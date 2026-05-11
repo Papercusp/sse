@@ -99,6 +99,39 @@ const DEFAULT_HEADERS: HeadersInit = {
   'X-Accel-Buffering': 'no',
 };
 
+/**
+ * Bridge an async iterable into the sink, emitting one event per item.
+ *
+ * Handles two cleanup paths producers always need but easily forget:
+ *   - When sink closes (client disconnect, done, error): we call `.return()`
+ *     on the underlying iterator so the producing channel gets unsubscribed.
+ *   - When the source iteration ends naturally: we leave the sink open
+ *     (it's the caller's choice whether to also call sink.done()).
+ *
+ * Usage:
+ *   setup: (sink) => bridgeChannel(ch.subscribe(), sink, ({ id, event }) =>
+ *     ({ name: 'update', data: event, opts: { id } })
+ *   ),
+ */
+export async function bridgeChannel<TItem, TEvents extends Record<string, unknown>>(
+  source: AsyncIterable<TItem>,
+  sink: SseSink<TEvents>,
+  map: (item: TItem) => {
+    name: keyof TEvents & string;
+    data: TEvents[keyof TEvents];
+    opts?: { id?: number | string };
+  } | null,
+): Promise<void> {
+  const iter = source[Symbol.asyncIterator]();
+  sink.onClose(() => { void iter.return?.(undefined); });
+  while (!sink.closed) {
+    const { value, done } = await iter.next();
+    if (done) return;
+    const out = map(value);
+    if (out) sink.event(out.name, out.data, out.opts);
+  }
+}
+
 /** Parse the Last-Event-ID header as a positive integer; null if absent or invalid. */
 export function parseLastEventId(req: Request): number | null {
   const raw = req.headers.get('Last-Event-ID');

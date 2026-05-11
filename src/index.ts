@@ -1,7 +1,7 @@
 // Public API — server bits (framework-free).
 
 // Server
-export { sseResponse, parseLastEventId } from './server/response';
+export { sseResponse, parseLastEventId, bridgeChannel } from './server/response';
 export type { SseSink, SseResponseOptions } from './server/response';
 
 // Channel

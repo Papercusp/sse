@@ -318,6 +318,58 @@ describe('sseResponse — heartbeat timer', () => {
   });
 });
 
+describe('sseResponse — sink.eventRaw', () => {
+  it('emits the data string verbatim (no JSON.stringify)', async () => {
+    const { req } = makeRequest();
+    const res = sseResponse({
+      signal: req.signal,
+      heartbeatMs: 0,
+      initialHeartbeat: false,
+      setup: (sink) => {
+        sink.eventRaw('chunk', 'hello world');
+        sink.done();
+      },
+    });
+    const body = await readAll(res);
+    // Raw string passes through — not JSON-quoted.
+    expect(body).toContain('event: chunk\ndata: hello world\n');
+    // Sanity: event() would have wrapped it in quotes.
+    expect(body).not.toContain('"hello world"');
+  });
+
+  it('still allocates a monotonic id by default', async () => {
+    const { req } = makeRequest();
+    const res = sseResponse({
+      signal: req.signal,
+      heartbeatMs: 0,
+      initialHeartbeat: false,
+      setup: (sink) => {
+        sink.eventRaw('chunk', 'a');
+        sink.eventRaw('chunk', 'b');
+        sink.done();
+      },
+    });
+    const body = await readAll(res);
+    expect(body).toMatch(/id: 1\nevent: chunk\ndata: a/);
+    expect(body).toMatch(/id: 2\nevent: chunk\ndata: b/);
+  });
+
+  it('respects explicit id override', async () => {
+    const { req } = makeRequest();
+    const res = sseResponse({
+      signal: req.signal,
+      heartbeatMs: 0,
+      initialHeartbeat: false,
+      setup: (sink) => {
+        sink.eventRaw('chunk', 'a', { id: 100 });
+        sink.done();
+      },
+    });
+    const body = await readAll(res);
+    expect(body).toContain('id: 100\nevent: chunk\ndata: a');
+  });
+});
+
 describe('sseResponse — pre-aborted signal', () => {
   it('returns a Response that closes immediately if signal is already aborted', async () => {
     const controller = new AbortController();

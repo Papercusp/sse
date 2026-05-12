@@ -36,7 +36,23 @@ export interface BusChannel<T> {
    * Does NOT yield `recent` — use recentSince() if you want backfill.
    */
   subscribe(): AsyncIterable<{ id: number; event: T }>;
+  /**
+   * Synchronous handler subscription. Called from within publish() before it
+   * returns — useful for in-process fan-out where consumers rely on
+   * publish-order, same-tick delivery. Returns an unsubscribe function.
+   * Handler throws are caught and swallowed.
+   * For SSE bridging prefer `subscribe()` + bridgeChannel — async iteration
+   * pairs naturally with stream writes.
+   */
+  onPublish(handler: (item: { id: number; event: T }) => void): () => void;
+  /**
+   * Synchronous notification when the channel is marked done(). Fires
+   * immediately if already done. Returns an unsubscribe function.
+   */
+  onDone(handler: () => void): () => void;
   readonly subscriberCount: number;
+  /** Number of synchronous handlers currently registered via onPublish. */
+  readonly syncHandlerCount: number;
 }
 
 export interface ChannelOptions {
@@ -60,6 +76,8 @@ interface ChannelState<T> {
   ring: Array<{ id: number; event: T }>;
   ids: IdAllocator;
   subs: Set<Subscriber<T>>;
+  syncHandlers: Set<(item: { id: number; event: T }) => void>;
+  doneHandlers: Set<() => void>;
   isDone: boolean;
   donePayload: unknown | undefined;
   gcTimer: ReturnType<typeof setTimeout> | null;
@@ -86,6 +104,8 @@ function makeState<T>(key: string, opts: ChannelOptions): ChannelState<T> {
     ring: [],
     ids: createIdAllocator(0),
     subs: new Set<Subscriber<T>>(),
+    syncHandlers: new Set<(item: { id: number; event: T }) => void>(),
+    doneHandlers: new Set<() => void>(),
     isDone: false,
     donePayload: undefined,
     gcTimer: null,
@@ -93,6 +113,12 @@ function makeState<T>(key: string, opts: ChannelOptions): ChannelState<T> {
 }
 
 function deliver<T>(state: ChannelState<T>, item: { id: number; event: T }): void {
+  // Synchronous handlers fire first, in publish order, before any async
+  // subscribers are notified. Handler throws are swallowed so a single bad
+  // listener can't break the producer or starve other subscribers.
+  for (const handler of state.syncHandlers) {
+    try { handler(item); } catch { /* never crash producer */ }
+  }
   for (const sub of state.subs) {
     if (sub.done) continue;
     if (sub.waiting) {
@@ -136,7 +162,26 @@ function bindChannel<T>(state: ChannelState<T>): BusChannel<T> {
           cb({ value: undefined as never, done: true });
         }
       }
+      // Fire sync done handlers AFTER async-subscriber teardown so handlers
+      // observing isDone see a quiesced channel.
+      for (const handler of state.doneHandlers) {
+        try { handler(); } catch { /* never crash producer */ }
+      }
       scheduleGC(state);
+    },
+
+    onPublish(handler) {
+      state.syncHandlers.add(handler);
+      return () => { state.syncHandlers.delete(handler); };
+    },
+
+    onDone(handler) {
+      if (state.isDone) {
+        try { handler(); } catch { /* swallow */ }
+        return () => {};
+      }
+      state.doneHandlers.add(handler);
+      return () => { state.doneHandlers.delete(handler); };
     },
 
     get isDone() { return state.isDone; },
@@ -193,6 +238,7 @@ function bindChannel<T>(state: ChannelState<T>): BusChannel<T> {
     },
 
     get subscriberCount() { return state.subs.size; },
+    get syncHandlerCount() { return state.syncHandlers.size; },
   };
 }
 
@@ -232,10 +278,17 @@ export function dropChannel(key: string): boolean {
   return true;
 }
 
-export function listChannels(): Array<{ key: string; subscribers: number; isDone: boolean; recentCount: number }> {
+export function listChannels(): Array<{
+  key: string;
+  subscribers: number;
+  syncHandlers: number;
+  isDone: boolean;
+  recentCount: number;
+}> {
   return Array.from(registry().values()).map((s) => ({
     key: s.key,
     subscribers: s.subs.size,
+    syncHandlers: s.syncHandlers.size,
     isDone: s.isDone,
     recentCount: s.ring.length,
   }));

@@ -207,10 +207,100 @@ describe('dropChannel + listChannels', () => {
     expect(list).toContain('test:listed-b');
   });
 
+  it('listChannels exposes syncHandlers count', () => {
+    const ch = getChannel<string>('test:sync-count');
+    expect(listChannels().find((c) => c.key === 'test:sync-count')?.syncHandlers).toBe(0);
+    const off = ch.onPublish(() => {});
+    expect(listChannels().find((c) => c.key === 'test:sync-count')?.syncHandlers).toBe(1);
+    off();
+    expect(listChannels().find((c) => c.key === 'test:sync-count')?.syncHandlers).toBe(0);
+  });
+
   it('dropChannel removes from registry', () => {
     getChannel<string>('test:droppable');
     expect(dropChannel('test:droppable')).toBe(true);
     expect(listChannels().some((c) => c.key === 'test:droppable')).toBe(false);
     expect(dropChannel('test:droppable')).toBe(false); // already gone
+  });
+});
+
+describe('onPublish + onDone (synchronous handlers)', () => {
+  it('onPublish handler fires synchronously inside publish, in publish order', () => {
+    const ch = getChannel<string>('test:onpub-order');
+    const seen: string[] = [];
+    ch.onPublish((item) => seen.push(item.event));
+    ch.publish('a');
+    expect(seen).toEqual(['a']);
+    ch.publish('b');
+    ch.publish('c');
+    expect(seen).toEqual(['a', 'b', 'c']);
+  });
+
+  it('onPublish unsubscribe stops further delivery', () => {
+    const ch = getChannel<string>('test:onpub-unsub');
+    const seen: string[] = [];
+    const off = ch.onPublish((item) => seen.push(item.event));
+    ch.publish('a');
+    off();
+    ch.publish('b');
+    expect(seen).toEqual(['a']);
+  });
+
+  it('onPublish handler throws are swallowed; siblings + producer continue', () => {
+    const ch = getChannel<string>('test:onpub-throw');
+    const seen: string[] = [];
+    ch.onPublish(() => { throw new Error('boom'); });
+    ch.onPublish((item) => seen.push(item.event));
+    expect(() => ch.publish('a')).not.toThrow();
+    expect(seen).toEqual(['a']);
+  });
+
+  it('multiple onPublish handlers fan-out to each in registration order', () => {
+    const ch = getChannel<string>('test:onpub-fanout');
+    const a: string[] = [];
+    const b: string[] = [];
+    ch.onPublish((item) => a.push(item.event));
+    ch.onPublish((item) => b.push(item.event));
+    ch.publish('x');
+    expect(a).toEqual(['x']);
+    expect(b).toEqual(['x']);
+  });
+
+  it('onDone fires when channel transitions to done', () => {
+    const ch = getChannel<string>('test:ondone-trans');
+    let fired = false;
+    ch.onDone(() => { fired = true; });
+    expect(fired).toBe(false);
+    ch.done();
+    expect(fired).toBe(true);
+  });
+
+  it('onDone fires immediately if channel is already done', () => {
+    const ch = getChannel<string>('test:ondone-already');
+    ch.done();
+    let fired = false;
+    ch.onDone(() => { fired = true; });
+    expect(fired).toBe(true);
+  });
+
+  it('onDone unsubscribe prevents fire on subsequent done() (registered before done)', () => {
+    const ch = getChannel<string>('test:ondone-unsub');
+    let fired = false;
+    const off = ch.onDone(() => { fired = true; });
+    off();
+    ch.done();
+    expect(fired).toBe(false);
+  });
+
+  it('syncHandlerCount reflects active registrations', () => {
+    const ch = getChannel<string>('test:onpub-count');
+    expect(ch.syncHandlerCount).toBe(0);
+    const off1 = ch.onPublish(() => {});
+    const off2 = ch.onPublish(() => {});
+    expect(ch.syncHandlerCount).toBe(2);
+    off1();
+    expect(ch.syncHandlerCount).toBe(1);
+    off2();
+    expect(ch.syncHandlerCount).toBe(0);
   });
 });

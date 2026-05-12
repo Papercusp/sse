@@ -292,6 +292,51 @@ describe('onPublish + onDone (synchronous handlers)', () => {
     expect(fired).toBe(false);
   });
 
+  it('sibling-unsubscribe during fan-out: deleted handler does not receive current event', () => {
+    const ch = getChannel<string>('test:onpub-sibling-unsub');
+    const seen: string[] = [];
+    let offB: (() => void) | null = null;
+    ch.onPublish((item) => {
+      seen.push(`A:${item.event}`);
+      if (item.event === 'x') offB!();
+    });
+    offB = ch.onPublish((item) => seen.push(`B:${item.event}`));
+    ch.publish('x'); // A runs first, unsubscribes B before B's slot
+    ch.publish('y');
+    // B was unsubscribed before its callback fired for 'x', so it shouldn't
+    // see anything.
+    expect(seen).toEqual(['A:x', 'A:y']);
+  });
+
+  it('self-unsubscribe inside handler: stops receiving from the NEXT publish onwards', () => {
+    const ch = getChannel<string>('test:onpub-self-unsub');
+    const seen: string[] = [];
+    let off: (() => void) | null = null;
+    off = ch.onPublish((item) => {
+      seen.push(`A:${item.event}`);
+      if (item.event === 'b') off!();
+    });
+    ch.onPublish((item) => seen.push(`B:${item.event}`));
+    ch.publish('a');
+    ch.publish('b'); // A unsubscribes itself here
+    ch.publish('c'); // A should NOT see this
+    expect(seen).toEqual(['A:a', 'B:a', 'A:b', 'B:b', 'B:c']);
+  });
+
+  it('re-entrant publish inside handler: delivered to all handlers depth-first', () => {
+    const ch = getChannel<string>('test:onpub-reentrant');
+    const seen: string[] = [];
+    let count = 0;
+    ch.onPublish((item) => {
+      seen.push(item.event);
+      if (count++ < 2) ch.publish(`echo-${item.event}`);
+    });
+    ch.publish('a');
+    // The original publish('a') runs the handler, which calls publish('echo-a'),
+    // which recurses into the handler again before the outer publish returns.
+    expect(seen).toEqual(['a', 'echo-a', 'echo-echo-a']);
+  });
+
   it('syncHandlerCount reflects active registrations', () => {
     const ch = getChannel<string>('test:onpub-count');
     expect(ch.syncHandlerCount).toBe(0);

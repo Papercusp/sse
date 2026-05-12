@@ -9,6 +9,7 @@ export default defineConfig({
     environmentMatchGlobs: [
       ['src/client/use-event-source.test.ts', 'jsdom'],
       ['src/__tests__/use-event-source.test.ts', 'jsdom'],
+      ['src/client/resilient-event-source.visibility.test.ts', 'jsdom'],
     ],
     // Integration tests that need real PG are tagged with `.pg.test.ts`
     // and excluded from the default run. Run them via `npx vitest run --include 'src/**/*.pg.test.ts'`.

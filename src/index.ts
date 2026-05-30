@@ -4,6 +4,10 @@
 export { sseResponse, parseLastEventId, bridgeChannel } from './server/response';
 export type { SseSink, SseResponseOptions } from './server/response';
 
+// Node/Express bridge for `sseResponse()` (deps-free; structural Node response).
+export { sseResponseToNode } from './server/node-bridge';
+export type { NodeResponseLike } from './server/node-bridge';
+
 // Channel
 export {
   getChannel,

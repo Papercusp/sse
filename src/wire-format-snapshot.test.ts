@@ -1,10 +1,10 @@
 /**
  * WIRE-FORMAT STABILITY CONTRACT.
  *
- * This test pins the BYTE-EXACT output of @restart/sse against the format
+ * This test pins the BYTE-EXACT output of @papercusp/sse against the format
  * documented in libs/sse/README.md. Changing it requires:
  *
- *   1. A major version bump of @restart/sse.
+ *   1. A major version bump of @papercusp/sse.
  *   2. A coordinated migration of every shipped desktop client that
  *      consumes events from any production SSE route (notably the
  *      ZeroSync SSEAdapter mounted by HarnessZeroProvider when

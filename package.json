@@ -1,5 +1,5 @@
 {
-  "name": "@restart/sse",
+  "name": "@papercusp/sse",
   "version": "0.0.1",
   "private": true,
   "description": "Spec-compliant Server-Sent Events primitives — server response builder, in-process channel bus, PG NOTIFY bridge, resilient EventSource client, React hook.",

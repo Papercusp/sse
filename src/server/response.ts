@@ -129,7 +129,10 @@ export async function bridgeChannel<TItem, TEvents extends Record<string, unknow
   sink: SseSink<TEvents>,
   map: (item: TItem) => {
     name: keyof TEvents & string;
-    data: TEvents[keyof TEvents];
+    // Mirror the `name` key constraint so `sink.event<K>(name, data)` (whose
+    // K extends `keyof TEvents & string`) accepts `data` — `TEvents[keyof TEvents]`
+    // and `TEvents[keyof TEvents & string]` are distinct index types to tsc.
+    data: TEvents[keyof TEvents & string];
     opts?: { id?: number | string };
   } | null,
 ): Promise<void> {

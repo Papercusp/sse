@@ -78,6 +78,9 @@ export async function pgListenChannel<T>(opts: PgListenChannelOptions<T>): Promi
     recentSince: channel.recentSince.bind(channel),
     subscribe: channel.subscribe.bind(channel),
     get subscriberCount() { return channel.subscriberCount; },
+    onPublish: channel.onPublish.bind(channel),
+    onDone: channel.onDone.bind(channel),
+    get syncHandlerCount() { return channel.syncHandlerCount; },
     async unlisten() {
       if (unlistened) return;
       unlistened = true;

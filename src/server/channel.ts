@@ -13,12 +13,15 @@
  * with Last-Event-ID and use `recentSince()` to recover.
  *
  * Channel key convention: prefix with your domain (e.g. `backup:`,
- * `branch-action:`, `harness-sync:`). See README.
+ * `audit:`, `jobs:`). See README.
  */
 
 import { createIdAllocator, type IdAllocator } from '../wire/ids';
 
-const GLOBAL_KEY = '__restartSseChannels__';
+// Self-namespaced by this package so the singleton survives HMR without
+// colliding with other libs on globalThis. Keyed to the package's own
+// identity — no consuming-app or sibling-project coupling.
+const GLOBAL_KEY = '__papercusp_sse_channels__';
 
 export interface BusChannel<T> {
   /** Publish an event. Assigns auto-id, notifies subscribers. Returns the id. */

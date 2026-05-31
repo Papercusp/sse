@@ -1,4 +1,4 @@
-# @restart/sse
+# @papercusp/sse
 
 Spec-compliant Server-Sent Events primitives. Zero base deps. Optional React
 and `postgres` peers via subpath imports.
@@ -12,7 +12,7 @@ headers were reimplemented each time. The production desktop sync path
 (`zero-harness/sse/route.ts` ↔ `SSEAdapter.tsx`) had the most-mature pattern
 in the repo, but lived alongside ad-hoc imitations.
 
-`@restart/sse` extracts the production patterns into one place. Migration is
+`@papercusp/sse` extracts the production patterns into one place. Migration is
 opportunistic — existing producers keep working until each is touched again.
 
 ## Public surface
@@ -28,13 +28,13 @@ import {
   type SseSink,
   SYNC_MAX_DURATION_SEC,
   ACTION_MAX_DURATION_SEC,
-} from '@restart/sse';
+} from '@papercusp/sse';
 ```
 
 ### React client
 
 ```ts
-import { useEventSource } from '@restart/sse/react';
+import { useEventSource } from '@papercusp/sse/react';
 ```
 
 ### Framework-free client
@@ -45,23 +45,23 @@ import {
   parseSseStream,
   type ResilientEventSource,
   type ParsedSseEvent,
-} from '@restart/sse';
+} from '@papercusp/sse';
 ```
 
 ### Postgres bridge
 
 ```ts
-import { pgListenChannel, type PgBusChannel } from '@restart/sse/postgres';
+import { pgListenChannel, type PgBusChannel } from '@papercusp/sse/postgres';
 ```
 
 ## Quick start — sync-style producer
 
 ```ts
 // app/api/zero-harness/sse/route.ts
-import { sseResponse, parseLastEventId, SYNC_MAX_DURATION_SEC } from '@restart/sse';
-import { pgListenChannel } from '@restart/sse/postgres';
-import type { SyncSseEventVocabulary } from '@restart/sse';
-import { getOrgPg } from '@restart/db-org';
+import { sseResponse, parseLastEventId, SYNC_MAX_DURATION_SEC } from '@papercusp/sse';
+import { pgListenChannel } from '@papercusp/sse/postgres';
+import type { SyncSseEventVocabulary } from '@papercusp/sse';
+import { getOrgPg } from '@papercusp/db-org';
 
 export const maxDuration = SYNC_MAX_DURATION_SEC;
 export const runtime = 'nodejs';
@@ -93,7 +93,7 @@ export async function GET(req: Request) {
 ## Quick start — React consumer
 
 ```tsx
-import { useEventSource } from '@restart/sse/react';
+import { useEventSource } from '@papercusp/sse/react';
 
 function Live({ url }: { url: string }) {
   const { status } = useEventSource(url, {

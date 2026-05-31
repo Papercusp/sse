@@ -192,9 +192,9 @@ describe('getChannel — globalThis pinning (HMR survival)', () => {
   it('uses the globalThis-pinned registry', () => {
     const ch = getChannel<string>('test:hmr');
     ch.publish('x');
-    const g = globalThis as unknown as { __papercusp_sse_channels__: Map<string, unknown> };
-    expect(g.__papercusp_sse_channels__).toBeDefined();
-    expect(g.__papercusp_sse_channels__.has('test:hmr')).toBe(true);
+    const g = globalThis as unknown as { __sse_channel_registry__: Map<string, unknown> };
+    expect(g.__sse_channel_registry__).toBeDefined();
+    expect(g.__sse_channel_registry__.has('test:hmr')).toBe(true);
   });
 });
 

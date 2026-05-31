@@ -33,6 +33,12 @@ export type {
 } from './client/resilient-event-source';
 export { parseSseStream } from './client/parse-stream';
 export type { ParsedSseEvent } from './client/parse-stream';
+export { resilientPostStream } from './client/resilient-post-stream';
+export type {
+  ResilientPostStreamOptions,
+  ResilientPostResume,
+  ResilientStreamEvent,
+} from './client/resilient-post-stream';
 
 // Vocabulary
 export type { SyncSseEventVocabulary } from './sync-events';

@@ -15,6 +15,9 @@ class FakeEventSource {
   readonly url: string;
   readonly listeners: FakeListenerEntry[] = [];
   closed = false;
+  // 0 CONNECTING, 1 OPEN, 2 CLOSED — the wrapper reads this in its error handler
+  // to tell a transient drop (CONNECTING, auto-reconnecting) from a death.
+  readyState = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -24,7 +27,7 @@ class FakeEventSource {
   addEventListener(type: string, fn: (ev: any) => void) {
     this.listeners.push({ type, fn });
   }
-  close() { this.closed = true; }
+  close() { this.closed = true; this.readyState = 2; }
 
   // Test-only helpers
   fire(type: string, data: any = '', lastEventId?: string) {
@@ -34,8 +37,11 @@ class FakeEventSource {
       }
     }
   }
-  fireOpen() { this.fire('open'); }
-  fireError() { this.fire('error'); }
+  fireOpen() { this.readyState = 1; this.fire('open'); }
+  /** A FATAL error — the ES gave up (readyState CLOSED). The wrapper rebuilds. */
+  fireError() { this.readyState = 2; this.fire('error'); }
+  /** A TRANSIENT drop — the ES is auto-reconnecting (readyState CONNECTING). */
+  fireDrop() { this.readyState = 0; this.fire('error'); }
 }
 
 beforeEach(() => {
@@ -192,6 +198,105 @@ describe('createResilientEventSource — reconnect + backoff + jitter', () => {
     expect(FakeEventSource.instances.length).toBe(3); // not yet
     vi.advanceTimersByTime(1);
     expect(FakeEventSource.instances.length).toBe(4); // back to 1s
+  });
+});
+
+describe('createResilientEventSource — transient (CONNECTING) drop cooperates with underlying auto-reconnect', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('does NOT recreate the EventSource on a transient drop (readyState CONNECTING)', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const statuses: string[] = [];
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      initialBackoffMs: 1000,
+      maxConsecutiveFailures: 0,
+      zombieTimeoutMs: 0, // isolate: only the error-path behavior under test
+      eventSourceCtor: FakeEventSource as any,
+      onStatusChange: (s) => statuses.push(s),
+    });
+    latest().fireOpen();
+    expect(FakeEventSource.instances).toHaveLength(1);
+    // The underlying ES stays CONNECTING and resumes itself — the wrapper must
+    // leave it alone (no close, no rebuild) even well past the backoff window.
+    latest().fireDrop();
+    expect(statuses.at(-1)).toBe('failing');
+    vi.advanceTimersByTime(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(latest().closed).toBe(false);
+  });
+
+  it('recovers to open when the same ES re-opens after a transient drop (no new instance)', () => {
+    const handle = createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      maxConsecutiveFailures: 0,
+      zombieTimeoutMs: 0,
+      eventSourceCtor: FakeEventSource as any,
+    });
+    latest().fireOpen();
+    latest().fireDrop(); // CONNECTING — wrapper waits
+    expect(handle.status).toBe('failing');
+    latest().fireOpen(); // underlying ES resumed — SAME instance fires open
+    expect(handle.status).toBe('open');
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it('still escalates after maxConsecutiveFailures on CONNECTING drops (server-down)', () => {
+    const onError = vi.fn();
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      maxConsecutiveFailures: 3,
+      zombieTimeoutMs: 0,
+      eventSourceCtor: FakeEventSource as any,
+      onError,
+    });
+    latest().fireDrop();
+    latest().fireDrop();
+    latest().fireDrop();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]?.[0]?.message).toMatch(/3 consecutive times/);
+    // The win: no churn — the wrapper never rebuilt the EventSource.
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it('zombie watchdog still force-rebuilds if a CONNECTING reconnect never recovers', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      zombieTimeoutMs: 5_000,
+      initialBackoffMs: 1000,
+      maxConsecutiveFailures: 0,
+      eventSourceCtor: FakeEventSource as any,
+    });
+    latest().fireOpen(); // arms zombie at t=5000
+    vi.advanceTimersByTime(4_000);
+    latest().fireDrop(); // CONNECTING — no rebuild, and zombie is NOT reset
+    expect(FakeEventSource.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1_001); // t=5_001 since open → zombie fires → close + reconnect
+    expect(latest().closed).toBe(true);
+    vi.advanceTimersByTime(1_000); // backoff elapses → new instance
+    expect(FakeEventSource.instances).toHaveLength(2);
+  });
+
+  it('a CLOSED (fatal) error still rebuilds with backoff', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      initialBackoffMs: 1000,
+      maxConsecutiveFailures: 0,
+      zombieTimeoutMs: 0,
+      eventSourceCtor: FakeEventSource as any,
+    });
+    latest().fireOpen();
+    latest().fireError(); // readyState CLOSED → genuine death
+    vi.advanceTimersByTime(1_000);
+    expect(FakeEventSource.instances).toHaveLength(2);
   });
 });
 

@@ -13,10 +13,18 @@
  *   - Optional visibility-pause: closes EventSource after document is hidden
  *     long enough; reconnects on return (saves battery on background tabs)
  *
- * Spec note: the browser's built-in EventSource has its own auto-reconnect
- * using the `retry:` field. The server SHOULD NOT emit `retry:` — let this
- * wrapper do all reconnect timing. Reason: we have richer policies (jitter,
- * zombie watchdog, visibility-pause, escalation) that the browser doesn't.
+ * Spec note: the browser's built-in EventSource auto-reconnects on an ordinary
+ * drop (readyState → CONNECTING) using its own ~3s retry. We COOPERATE with
+ * that rather than override it: a transient `error` (readyState CONNECTING) is
+ * left to the underlying EventSource — native, or on desktop IpcEventSource —
+ * to resume with `Last-Event-ID`, while this wrapper owns the heavier policies
+ * the browser lacks: zombie watchdog (proxy-hung stream), consecutive-failure
+ * escalation, visibility-pause, and a jittered exponential backoff for genuine
+ * CLOSED failures (non-2xx / wrong content-type / IPC-unavailable). The old
+ * behavior — close + recreate on EVERY error — churned a fresh connection on
+ * each blip, and over Tauri IPC a whole new channel + sync re-subscribe + a
+ * re-render (the dev-IPC "constant flashing"). The server SHOULD NOT emit
+ * `retry:`. Plan: calltool-endpoint-seam-2026-06-01 (Phase D, P-007 / D-006).
  */
 
 export type ResilientEventSourceStatus = 'idle' | 'connecting' | 'open' | 'failing' | 'closed';
@@ -202,9 +210,9 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
 
     es.addEventListener('error', () => {
       if (cancelled) return;
-      es?.close();
-      es = null;
-      clearZombie();
+      // Escalation counts EVERY error (a server-down stream stays CONNECTING and
+      // retries forever — we still want to tell the caller after N so it can
+      // fall back to another transport).
       consecutiveFailures++;
       if (
         cfg.maxConsecutiveFailures > 0
@@ -216,7 +224,26 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
           `SSE connection to ${url} failed ${consecutiveFailures} consecutive times`,
         ));
       }
-      scheduleReconnect();
+      // Recreate ONLY when the underlying EventSource has genuinely given up
+      // (readyState CLOSED). A transient drop leaves it at CONNECTING, where the
+      // EventSource — native, or IpcEventSource on desktop — reconnects itself
+      // with Last-Event-ID; the zombie watchdog armed during the last OPEN is
+      // the safety net if that silent reconnect never recovers. Closing +
+      // recreating on a CONNECTING error (the old behavior) discards a stream
+      // that was about to resume, and over IPC tears down the channel + re-subs
+      // the sync layer on every blip (the flashing). Terminal errors set
+      // readyState CLOSED and land here for a real reconnect-with-backoff.
+      const CLOSED = 2;
+      if (!es || (es as { readyState?: number }).readyState === CLOSED) {
+        es?.close();
+        es = null;
+        clearZombie();
+        scheduleReconnect(); // sets status 'failing' + jittered backoff
+      } else {
+        // Auto-reconnecting (CONNECTING). Reflect the blip; the `open` handler
+        // resets backoff/failures when it recovers.
+        setStatus('failing');
+      }
     });
 
     // Silence "unused" lint for the firstConnect flag — preserved for

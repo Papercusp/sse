@@ -55,6 +55,29 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('createResilientEventSource — visibility pause', () => {
+  it('does NOT register a visibilitychange listener when no EventSource ctor exists (P-071)', () => {
+    const realEventSource = (globalThis as { EventSource?: unknown }).EventSource;
+    delete (globalThis as { EventSource?: unknown }).EventSource;
+    const addSpy = vi.spyOn(document, 'addEventListener');
+    try {
+      const source = createResilientEventSource({
+        url: 'http://x/sse',
+        visibilityPause: true,
+        handlers: {},
+        // no eventSourceCtor, no global → connect() is a permanent no-op
+      });
+      expect(
+        addSpy.mock.calls.filter(([type]) => type === 'visibilitychange'),
+      ).toHaveLength(0);
+      source.close(); // still safe to close without a registered listener
+    } finally {
+      addSpy.mockRestore();
+      if (realEventSource !== undefined) {
+        (globalThis as { EventSource?: unknown }).EventSource = realEventSource;
+      }
+    }
+  });
+
   it('does NOT close the source when visibility pause is disabled (default)', () => {
     const onStatusChange = vi.fn();
     createResilientEventSource({

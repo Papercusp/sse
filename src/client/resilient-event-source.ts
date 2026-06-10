@@ -276,7 +276,10 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
     }
   };
 
-  if (cfg.visibilityPause && typeof document !== 'undefined') {
+  // No Ctor (SSR / Node without polyfill) → connect() is a permanent no-op,
+  // so a visibility listener would be a pure leak (audit P-071): nothing to
+  // pause, nothing to resume, and non-browser hosts rarely call close().
+  if (cfg.visibilityPause && typeof document !== 'undefined' && Ctor) {
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
 
@@ -314,7 +317,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       clearZombie();
       clearReconnect();
       if (hiddenSinceTimer) { clearTimeout(hiddenSinceTimer); hiddenSinceTimer = null; }
-      if (cfg.visibilityPause && typeof document !== 'undefined') {
+      if (cfg.visibilityPause && typeof document !== 'undefined' && Ctor) {
         document.removeEventListener('visibilitychange', onVisibilityChange);
       }
       setStatus('closed');

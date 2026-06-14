@@ -65,6 +65,16 @@ export interface ChannelOptions {
   subscriberQueueSize?: number;
   /** GC delay after done() AND zero subscribers. Default 60_000. */
   gcDelayMs?: number;
+  /**
+   * Idle-reap backstop. A channel with ZERO subscribers and no publish/access
+   * for this long is dropped even if done() was never called — the safety net
+   * for a producer that died WITHOUT terminating its channel (e.g. a crashed
+   * subprocess that never sent its final chunk). scheduleGC only handles the
+   * normal done()+0-subs case (gcDelayMs); this catches the never-done case,
+   * which scheduleGC's `!isDone` guard otherwise skips forever. Default 600_000
+   * (10 min).
+   */
+  idleReapMs?: number;
 }
 
 interface Subscriber<T> {
@@ -84,6 +94,8 @@ interface ChannelState<T> {
   isDone: boolean;
   donePayload: unknown | undefined;
   gcTimer: ReturnType<typeof setTimeout> | null;
+  /** Epoch ms of the last publish / getChannel access — drives the idle-reap backstop. */
+  lastActivityMs: number;
 }
 
 type ChannelRegistry = Map<string, ChannelState<unknown>>;
@@ -98,6 +110,7 @@ const DEFAULTS: Required<ChannelOptions> = {
   ringSize: 256,
   subscriberQueueSize: 4096,
   gcDelayMs: 60_000,
+  idleReapMs: 600_000,
 };
 
 function makeState<T>(key: string, opts: ChannelOptions): ChannelState<T> {
@@ -112,6 +125,7 @@ function makeState<T>(key: string, opts: ChannelOptions): ChannelState<T> {
     isDone: false,
     donePayload: undefined,
     gcTimer: null,
+    lastActivityMs: Date.now(),
   };
 }
 
@@ -143,6 +157,7 @@ function bindChannel<T>(state: ChannelState<T>): BusChannel<T> {
       if (state.isDone) {
         throw new Error(`channel ${state.key}: publish after done()`);
       }
+      state.lastActivityMs = Date.now();
       const id = state.ids.next();
       const item = { id, event };
       // Ring buffer write
@@ -245,6 +260,35 @@ function bindChannel<T>(state: ChannelState<T>): BusChannel<T> {
   };
 }
 
+// ── idle-reap backstop ────────────────────────────────────────────────────────
+// scheduleGC only reaps a channel that called done() and has zero subscribers.
+// A producer that dies WITHOUT done() (e.g. a crashed orchestrator subprocess
+// that never POSTs its terminal chunk) leaves a channel that is never isDone, so
+// scheduleGC's `!state.isDone` guard skips it forever — an unbounded
+// per-producer leak (EI-127, cluster #5). This process-wide sweep is the
+// backstop: drop any channel with zero subscribers idle past its idleReapMs,
+// regardless of isDone. Cheap (one O(N) pass/min, N = live channels), unref'd so
+// it never holds the process open.
+const REAPER_SWEEP_MS = 60_000;
+let reaperTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureReaper(): void {
+  if (reaperTimer) return;
+  reaperTimer = setInterval(() => {
+    const now = Date.now();
+    const reg = registry();
+    for (const [key, state] of reg) {
+      if (state.subs.size === 0 && now - state.lastActivityMs > state.opts.idleReapMs) {
+        if (state.gcTimer) clearTimeout(state.gcTimer);
+        reg.delete(key);
+      }
+    }
+  }, REAPER_SWEEP_MS);
+  if (typeof (reaperTimer as { unref?: () => void }).unref === 'function') {
+    (reaperTimer as { unref: () => void }).unref();
+  }
+}
+
 function scheduleGC<T>(state: ChannelState<T>): void {
   if (!state.isDone || state.subs.size > 0) return;
   if (state.gcTimer) clearTimeout(state.gcTimer);
@@ -257,17 +301,21 @@ function scheduleGC<T>(state: ChannelState<T>): void {
 }
 
 export function getChannel<T>(key: string, opts: ChannelOptions = {}): BusChannel<T> {
+  ensureReaper();
   const reg = registry();
   let state = reg.get(key) as ChannelState<T> | undefined;
   if (!state) {
     state = makeState<T>(key, opts);
     reg.set(key, state as ChannelState<unknown>);
-  } else if (state.gcTimer) {
-    // GC was scheduled; cancel it because someone wants this channel.
-    clearTimeout(state.gcTimer);
-    state.gcTimer = null;
-    state.isDone = false;
-    state.donePayload = undefined;
+  } else {
+    state.lastActivityMs = Date.now();
+    if (state.gcTimer) {
+      // GC was scheduled; cancel it because someone wants this channel.
+      clearTimeout(state.gcTimer);
+      state.gcTimer = null;
+      state.isDone = false;
+      state.donePayload = undefined;
+    }
   }
   return bindChannel(state);
 }
@@ -303,4 +351,8 @@ export function _resetChannelsForTest(): void {
     if (state.gcTimer) clearTimeout(state.gcTimer);
   }
   registry().clear();
+  if (reaperTimer) {
+    clearInterval(reaperTimer);
+    reaperTimer = null;
+  }
 }

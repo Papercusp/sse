@@ -80,7 +80,10 @@ export interface SseResponseOptions<TEvents extends Record<string, unknown>> {
    */
   setup: (sink: SseSink<TEvents>) => void | Promise<void>;
 
-  /** Heartbeat interval ms; 0 disables. Default 15_000. */
+  /** Heartbeat interval ms; 0 disables. Default 10_000 — P2-3
+   *  (operator-scalability-event-loop-2026-06-16): a faster beat means a
+   *  momentarily-lagged loop is likelier to still emit one within the client's
+   *  (now wider) zombie-grace window, instead of tripping a false reconnect. */
   heartbeatMs?: number;
 
   /** Send a heartbeat at open to confirm liveness. Default true. */
@@ -158,7 +161,7 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
   opts: SseResponseOptions<TEvents>
 ): Response {
   const ids = createIdAllocator(opts.lastEventId ?? 0);
-  const heartbeatMs = opts.heartbeatMs ?? 15_000;
+  const heartbeatMs = opts.heartbeatMs ?? 10_000;
   const initialHeartbeat = opts.initialHeartbeat ?? true;
   const sinceId = opts.lastEventId ?? 0;
 

@@ -92,7 +92,7 @@ const DEFAULTS = {
   initialBackoffMs: 1_000,
   maxBackoffMs: 30_000,
   jitter: 0.2,
-  zombieTimeoutMs: 30_000,
+  zombieTimeoutMs: 45_000,
   maxConsecutiveFailures: 3,
   visibilityPauseMs: 60_000,
 };

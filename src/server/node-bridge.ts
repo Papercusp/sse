@@ -23,6 +23,12 @@ export interface NodeResponseLike {
   end(): void;
   /** Optional: used to tear the socket down on a mid-stream read error. */
   destroy?(err?: Error): void;
+  /** Optional (Node ServerResponse has it): await 'drain' for backpressure, and
+   *  'close'/'error' so a dead client never wedges the pump. P2-4. */
+  once?(event: 'drain' | 'close' | 'error', cb: () => void): void;
+  /** Optional liveness flags — stop pumping once the socket is torn down. */
+  destroyed?: boolean;
+  writableEnded?: boolean;
 }
 
 /**

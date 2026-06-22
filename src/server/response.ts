@@ -8,6 +8,9 @@
  *   - Initial heartbeat on open
  *   - Late-join terminal short-circuit (no client-hangs after channel is done)
  *   - Ring-buffer replay filtered by Last-Event-ID
+ *   - Resume-integrity `resync` control event (opt-in via `resumeBounds`): when a
+ *     resuming client's id is below the buffer floor (gap) or above the source max
+ *     (restart), emit `resync` + skip partial replay → client refetches full
  *   - Single onClose path for all close triggers (cancel, signal abort, done, close)
  *
  * Wire format is fixed (STABILITY CONTRACT — see README). The lifecycle is
@@ -94,6 +97,26 @@ export interface SseResponseOptions<TEvents extends Record<string, unknown>> {
    * resolved; lib filters items whose id <= lastEventId.
    */
   replay?: () => Iterable<{ name: keyof TEvents & string; data: TEvents[keyof TEvents]; id: number }>;
+
+  /**
+   * Optional resume-INTEGRITY bounds (the source's current [floorId, maxId] —
+   * for a ring buffer: `{ floorId: ch.recent[0].id, maxId: ch.recent.at(-1).id }`).
+   * When the client resumes (lastEventId set), the lib checks whether the resume
+   * point is still recoverable from replay:
+   *   - `lastEventId + 1 < floorId` → the events the client needs were EVICTED
+   *     from the buffer (a silent GAP — replay would skip them);
+   *   - `lastEventId > maxId`       → the client's id is AHEAD of the source
+   *     (the channel/process restarted and ids reset — the client's baseline is
+   *     from a dead generation, so future lower ids would be filtered out).
+   * In either case the client cannot safely resume, so the lib emits the
+   * reserved `resync` control event (`{ reason: 'gap' | 'ahead', fromId, floorId,
+   * maxId }`) and SKIPS the partial replay — the client must DISCARD local state
+   * and refetch the full snapshot, then resume live. Without it, a resume past the
+   * buffer floor (or after a restart) silently diverges — the exact wrong-merge
+   * this protocol exists to retire. OPT-IN: omit it (or for append-only streams
+   * with no full-refetch fallback) ⇒ no integrity check, legacy replay behaviour.
+   */
+  resumeBounds?: () => { floorId: number; maxId: number } | null;
 
   /**
    * If the source is already terminal at open, emit `done` with the returned
@@ -264,8 +287,33 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
         enqueue(heartbeatFrame());
       }
 
-      // Step 3: replay backfill, filtered by lastEventId.
-      if (opts.replay) {
+      // Step 2.5: resume-integrity check. If the client is resuming but its
+      // resume point is no longer recoverable from the buffer (events evicted →
+      // 'gap', or its id is ahead of the source after a restart → 'ahead'), emit
+      // the reserved `resync` control event and SKIP partial replay — the client
+      // must discard local state + refetch the full snapshot. This is the
+      // standardized fallback-to-full that stops a silent post-eviction divergence.
+      let resynced = false;
+      if (opts.lastEventId != null && opts.lastEventId > 0 && opts.resumeBounds) {
+        const b = opts.resumeBounds();
+        if (b) {
+          const reason =
+            opts.lastEventId > b.maxId ? 'ahead' : opts.lastEventId + 1 < b.floorId ? 'gap' : null;
+          if (reason) {
+            enqueue(
+              encodeFrame({
+                event: 'resync',
+                data: JSON.stringify({ reason, fromId: opts.lastEventId, floorId: b.floorId, maxId: b.maxId }),
+              }),
+            );
+            resynced = true;
+          }
+        }
+      }
+
+      // Step 3: replay backfill, filtered by lastEventId. Skipped after a resync —
+      // the client is refetching the full snapshot, so a partial backfill is moot.
+      if (opts.replay && !resynced) {
         try {
           for (const item of opts.replay()) {
             if (item.id <= sinceId) continue;

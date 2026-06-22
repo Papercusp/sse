@@ -177,5 +177,5 @@ type safety and document the prefix.
 
 ## Status
 
-Initial implementation 2026-05-11. See `apps/operator/providers/HarnessZeroProvider.tsx`
+Initial implementation 2026-05-11. See `apps/operator/providers/HarnessSyncProvider.tsx`
 for the canonical desktop-vs-web transport-selection rule that this library serves.

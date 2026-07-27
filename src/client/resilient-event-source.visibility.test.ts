@@ -179,46 +179,55 @@ describe('createResilientEventSource — bfcache pagehide/pageshow', () => {
     expect(onStatusChange).toHaveBeenLastCalledWith('idle');
   });
 
+  // NOTE: wrappers created by EARLIER tests in this file are never closed and
+  // (correctly) also react to window-level pagehide/pageshow — so these tests
+  // count only instances carrying their own unique URL instead of asserting
+  // on the global instance count.
+  const withUrl = (url: string) => FakeEventSource.instances.filter((i) => i.url === url);
+  const latestWithUrl = (url: string) => withUrl(url)[withUrl(url).length - 1]!;
+
   it('reconnects on pageshow after a pagehide pause (bfcache restore)', () => {
+    const url = 'http://x/sse-bfc-restore';
     createResilientEventSource({
-      url: 'http://x/sse',
+      url,
       handlers: {},
       initialBackoffMs: 100,
       eventSourceCtor: FakeEventSource as any,
     });
-    latest().fireOpen();
-    expect(FakeEventSource.instances.length).toBe(1);
+    latestWithUrl(url).fireOpen();
+    expect(withUrl(url).length).toBe(1);
 
     window.dispatchEvent(new Event('pagehide'));
-    expect(latest().closed).toBe(true);
+    expect(latestWithUrl(url).closed).toBe(true);
 
     window.dispatchEvent(new Event('pageshow'));
-    expect(FakeEventSource.instances.length).toBe(2);
-    expect(latest().closed).toBe(false);
+    expect(withUrl(url).length).toBe(2);
+    expect(latestWithUrl(url).closed).toBe(false);
   });
 
   it('pageshow without a preceding pagehide is a no-op (normal first show)', () => {
+    const url = 'http://x/sse-bfc-noop';
     createResilientEventSource({
-      url: 'http://x/sse',
+      url,
       handlers: {},
       eventSourceCtor: FakeEventSource as any,
     });
-    latest().fireOpen();
+    latestWithUrl(url).fireOpen();
     window.dispatchEvent(new Event('pageshow'));
-    expect(FakeEventSource.instances.length).toBe(1);
+    expect(withUrl(url).length).toBe(1);
   });
 
   it('close() removes the pagehide/pageshow listeners', () => {
+    const url = 'http://x/sse-bfc-closed';
     const source = createResilientEventSource({
-      url: 'http://x/sse',
+      url,
       handlers: {},
       eventSourceCtor: FakeEventSource as any,
     });
-    latest().fireOpen();
+    latestWithUrl(url).fireOpen();
     source.close();
-    const countAtClose = FakeEventSource.instances.length;
     window.dispatchEvent(new Event('pagehide'));
     window.dispatchEvent(new Event('pageshow'));
-    expect(FakeEventSource.instances.length).toBe(countAtClose); // no zombie reconnect
+    expect(withUrl(url).length).toBe(1); // no zombie reconnect after close()
   });
 });

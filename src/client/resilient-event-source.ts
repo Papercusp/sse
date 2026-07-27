@@ -118,6 +118,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
   let zombieTimer: ReturnType<typeof setTimeout> | null = null;
   let hiddenSinceTimer: ReturnType<typeof setTimeout> | null = null;
   let pausedByVisibility = false;
+  let pausedByPageHide = false;
 
   const setStatus = (next: ResilientEventSourceStatus) => {
     if (status === next) return;
@@ -283,6 +284,42 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
 
+  // bfcache lifecycle (2026-07-26, owner desktop pool-starvation): a document
+  // put into the back/forward cache is FROZEN, not unmounted — React effect
+  // cleanups never run, so this stream's socket stays ESTABLISHED while the
+  // page sits in the cache. WebKit keeps ~6 connections per host: a handful of
+  // same-origin navigations (each old page caching one live SSE socket)
+  // exhausts the pool and every fetch from the LIVE page queues forever
+  // (observed: gym tab stuck on "Loading…" with 6/6 sockets held, server
+  // healthy at 13ms). `pagehide` is the one reliable signal (fires for both
+  // bfcache entry and real unload) → release the socket immediately;
+  // `pageshow` with `persisted` restores it. NOT gated on visibilityPause —
+  // releasing the socket on page exit is correctness, not an optimization.
+  const onPageHide = () => {
+    if (cancelled || pausedByPageHide) return;
+    pausedByPageHide = true;
+    if (hiddenSinceTimer) { clearTimeout(hiddenSinceTimer); hiddenSinceTimer = null; }
+    es?.close();
+    es = null;
+    clearZombie();
+    clearReconnect();
+    setStatus('idle');
+  };
+  const onPageShow = (ev: { persisted?: boolean }) => {
+    if (cancelled || !pausedByPageHide) return;
+    pausedByPageHide = false;
+    // Only a bfcache restore needs a reconnect; a normal first-show never saw
+    // the pagehide close. Guarded anyway (pausedByPageHide) so a stray
+    // non-persisted pageshow after a pagehide still recovers the stream.
+    void ev;
+    backoffMs = cfg.initialBackoffMs;
+    connect();
+  };
+  if (typeof window !== 'undefined' && Ctor) {
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onPageShow);
+  }
+
   // Kick off the initial connect.
   connect();
 
@@ -319,6 +356,10 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       if (hiddenSinceTimer) { clearTimeout(hiddenSinceTimer); hiddenSinceTimer = null; }
       if (cfg.visibilityPause && typeof document !== 'undefined' && Ctor) {
         document.removeEventListener('visibilitychange', onVisibilityChange);
+      }
+      if (typeof window !== 'undefined' && Ctor) {
+        window.removeEventListener('pagehide', onPageHide);
+        window.removeEventListener('pageshow', onPageShow);
       }
       setStatus('closed');
     },

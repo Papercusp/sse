@@ -162,3 +162,63 @@ describe('createResilientEventSource — visibility pause', () => {
     expect(onStatusChange).toHaveBeenLastCalledWith('connecting');
   });
 });
+
+describe('createResilientEventSource — bfcache pagehide/pageshow', () => {
+  it('releases the socket on pagehide even without visibilityPause (correctness, not an optimization)', () => {
+    const onStatusChange = vi.fn();
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      eventSourceCtor: FakeEventSource as any,
+      onStatusChange,
+    });
+    latest().fireOpen();
+
+    window.dispatchEvent(new Event('pagehide'));
+    expect(latest().closed).toBe(true);
+    expect(onStatusChange).toHaveBeenLastCalledWith('idle');
+  });
+
+  it('reconnects on pageshow after a pagehide pause (bfcache restore)', () => {
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      initialBackoffMs: 100,
+      eventSourceCtor: FakeEventSource as any,
+    });
+    latest().fireOpen();
+    expect(FakeEventSource.instances.length).toBe(1);
+
+    window.dispatchEvent(new Event('pagehide'));
+    expect(latest().closed).toBe(true);
+
+    window.dispatchEvent(new Event('pageshow'));
+    expect(FakeEventSource.instances.length).toBe(2);
+    expect(latest().closed).toBe(false);
+  });
+
+  it('pageshow without a preceding pagehide is a no-op (normal first show)', () => {
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      eventSourceCtor: FakeEventSource as any,
+    });
+    latest().fireOpen();
+    window.dispatchEvent(new Event('pageshow'));
+    expect(FakeEventSource.instances.length).toBe(1);
+  });
+
+  it('close() removes the pagehide/pageshow listeners', () => {
+    const source = createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: {},
+      eventSourceCtor: FakeEventSource as any,
+    });
+    latest().fireOpen();
+    source.close();
+    const countAtClose = FakeEventSource.instances.length;
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(new Event('pageshow'));
+    expect(FakeEventSource.instances.length).toBe(countAtClose); // no zombie reconnect
+  });
+});

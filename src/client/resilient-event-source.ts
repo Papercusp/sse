@@ -27,6 +27,8 @@
  * `retry:`. Plan: calltool-endpoint-seam-2026-06-01 (Phase D, P-007 / D-006).
  */
 
+import { registerLiveStream } from './stream-registry';
+
 export type ResilientEventSourceStatus = 'idle' | 'connecting' | 'open' | 'failing' | 'closed';
 
 export interface ResilientEventSourceOptions {
@@ -119,6 +121,12 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
   let hiddenSinceTimer: ReturnType<typeof setTimeout> | null = null;
   let pausedByVisibility = false;
   let pausedByPageHide = false;
+  /** Unregister fn for this stream's per-host connection slot; null when we hold none. */
+  let releaseSlot: (() => void) | null = null;
+  const dropSlot = () => {
+    releaseSlot?.();
+    releaseSlot = null;
+  };
 
   const setStatus = (next: ResilientEventSourceStatus) => {
     if (status === next) return;
@@ -157,6 +165,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       // though EventSource may still think it's open.
       es?.close();
       es = null;
+      dropSlot();
       scheduleReconnect();
     }, cfg.zombieTimeoutMs);
   };
@@ -176,6 +185,12 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       scheduleReconnect();
       return;
     }
+    // This stream now holds one of the engine's per-host connection slots (see
+    // stream-registry: at the cap, every REST fetch on the page starves). Track
+    // it from construction — a CONNECTING socket occupies the slot too — and
+    // release on every path that drops the socket below.
+    releaseSlot?.();
+    releaseSlot = registerLiveStream(url);
 
     es.addEventListener('open', () => {
       backoffMs = cfg.initialBackoffMs;
@@ -238,6 +253,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       if (!es || (es as { readyState?: number }).readyState === CLOSED) {
         es?.close();
         es = null;
+        dropSlot();
         clearZombie();
         scheduleReconnect(); // sets status 'failing' + jittered backoff
       } else {
@@ -263,6 +279,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
         pausedByVisibility = true;
         es.close();
         es = null;
+        dropSlot();
         clearZombie();
         clearReconnect();
         setStatus('idle');
@@ -301,6 +318,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
     if (hiddenSinceTimer) { clearTimeout(hiddenSinceTimer); hiddenSinceTimer = null; }
     es?.close();
     es = null;
+    dropSlot();
     clearZombie();
     clearReconnect();
     setStatus('idle');
@@ -331,6 +349,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       url = next;
       es?.close();
       es = null;
+      dropSlot();
       clearZombie();
       clearReconnect();
       backoffMs = cfg.initialBackoffMs;
@@ -342,6 +361,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       if (cancelled) return;
       es?.close();
       es = null;
+      dropSlot();
       clearZombie();
       clearReconnect();
       backoffMs = cfg.initialBackoffMs;
@@ -351,6 +371,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       cancelled = true;
       es?.close();
       es = null;
+      dropSlot();
       clearZombie();
       clearReconnect();
       if (hiddenSinceTimer) { clearTimeout(hiddenSinceTimer); hiddenSinceTimer = null; }

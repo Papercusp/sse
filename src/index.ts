@@ -26,6 +26,14 @@ export type { SseFrame } from './wire/format';
 
 // Client primitives (framework-free)
 export { createResilientEventSource } from './client/resilient-event-source';
+// Live standing-stream registry (per-host connection budget — see stream-registry).
+export {
+  listLiveStreams,
+  countLiveStreamsForHost,
+  registerLiveStream,
+  STREAM_BUDGET_WARN_AT,
+} from './client/stream-registry';
+export type { LiveStreamRecord } from './client/stream-registry';
 export type {
   ResilientEventSource,
   ResilientEventSourceOptions,

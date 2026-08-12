@@ -43,9 +43,17 @@ export interface ResilientEventSourceOptions {
   jitter?: number;
   /**
    * Zombie watchdog. If no event AND no heartbeat for this long, force-reconnect.
-   * Default 30_000. Set to 0 to disable.
-   * MUST be > server heartbeatMs by enough margin to absorb network jitter
-   * (we use 30s for a 15s server heartbeat — one missed beat of grace).
+   * Default `DEFAULT_ZOMBIE_TIMEOUT_MS` (45_000). Set to 0 to disable.
+   *
+   * MUST be > server heartbeatMs by enough margin to absorb network jitter: at
+   * 45s against a 15s server heartbeat that is two missed beats of grace.
+   *
+   * It is also a CEILING for any consumer running its own silence timer on
+   * `onSignal`: this watchdog and that timer are fed by the SAME signal, so
+   * whichever is shorter fires first and the other is dead code. A consumer
+   * threshold >= this value can never be observed. See
+   * `apps/operator/app/_components/chat/stream-freshness.ts`, whose ladder
+   * ordering is pinned by `stream-freshness.ladder.test.ts`.
    */
   zombieTimeoutMs?: number;
   /**

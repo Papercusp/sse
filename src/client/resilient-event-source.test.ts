@@ -527,3 +527,76 @@ describe('createResilientEventSource — EventSource ctor throw', () => {
     expect(onError.mock.calls[0]?.[0]?.message).toMatch(/connection refused/);
   });
 });
+
+/**
+ * `onSignal` — the liveness seam the chat pane's staleness detector needs
+ * (gui-chat-pane-repaint-2026-08-12 P-003). The distinction it must preserve:
+ * an IDLE producer emits no payload events, but its heartbeats keep arriving —
+ * so a UI keyed on payload handlers alone reports a perfectly healthy stream as
+ * dead. The heartbeat case below is the entire reason this callback exists,
+ * because a caller's own `heartbeat` handler is deliberately never dispatched
+ * (this module consumes that event), leaving heartbeats otherwise unobservable.
+ */
+describe('createResilientEventSource — onSignal liveness', () => {
+  it('fires on a HEARTBEAT, which no caller handler can otherwise see', () => {
+    const onSignal = vi.fn();
+    const heartbeatHandler = vi.fn();
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: { heartbeat: heartbeatHandler },
+      eventSourceCtor: FakeEventSource as any,
+      onSignal,
+    });
+    latest().fireOpen();
+    onSignal.mockClear();
+    latest().fire('heartbeat');
+    expect(onSignal).toHaveBeenCalledTimes(1);
+    // Unchanged contract: the wrapper consumes `heartbeat`, so the caller's own
+    // handler still never runs. That is precisely why onSignal is required.
+    expect(heartbeatHandler).not.toHaveBeenCalled();
+  });
+
+  it('fires on open and on a dispatched payload event', () => {
+    const onSignal = vi.fn();
+    const backfill = vi.fn();
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: { backfill },
+      eventSourceCtor: FakeEventSource as any,
+      onSignal,
+    });
+    latest().fireOpen();
+    expect(onSignal).toHaveBeenCalled();
+    const afterOpen = onSignal.mock.calls.length;
+    latest().fire('backfill', '[]');
+    expect(onSignal.mock.calls.length).toBeGreaterThan(afterOpen);
+    expect(backfill).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing observer never tears down the stream', () => {
+    const backfill = vi.fn();
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: { backfill },
+      eventSourceCtor: FakeEventSource as any,
+      onSignal: () => { throw new Error('observer blew up'); },
+    });
+    latest().fireOpen();
+    expect(() => latest().fire('backfill', '[]')).not.toThrow();
+    expect(backfill).toHaveBeenCalledTimes(1);
+    expect(latest().closed).toBe(false);
+  });
+
+  it('is optional — omitting it changes nothing', () => {
+    const backfill = vi.fn();
+    createResilientEventSource({
+      url: 'http://x/sse',
+      handlers: { backfill },
+      eventSourceCtor: FakeEventSource as any,
+    });
+    latest().fireOpen();
+    expect(() => latest().fire('heartbeat')).not.toThrow();
+    latest().fire('backfill', '[]');
+    expect(backfill).toHaveBeenCalledTimes(1);
+  });
+});

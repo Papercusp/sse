@@ -133,6 +133,19 @@ export interface ResilientEventSource {
  */
 export const DEFAULT_ZOMBIE_TIMEOUT_MS = 45_000;
 
+/**
+ * Effective idle ceiling for long-lived SSE calls over the Tauri endpoint-IPC
+ * transport. This is a TypeScript mirror of
+ * `IPC_STREAM_IDLE_TIMEOUT_MS` in
+ * `papercusp-desktop/src-tauri/src/endpoint_ipc.rs`:
+ * two 15 s server-heartbeat intervals plus one 2 s watchdog tick.
+ *
+ * It is exported because a desktop UI's silence rung races this ceiling even
+ * though the generic EventSource wrapper's own watchdog defaults to 45 s. The
+ * chat freshness ladder source-pins this value against the Rust writer.
+ */
+export const DESKTOP_IPC_STREAM_IDLE_TIMEOUT_MS = 32_000;
+
 const DEFAULTS = {
   initialBackoffMs: 1_000,
   maxBackoffMs: 30_000,

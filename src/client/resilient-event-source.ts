@@ -61,6 +61,21 @@ export interface ResilientEventSourceOptions {
   /** Called when status changes. */
   onStatusChange?: (status: ResilientEventSourceStatus) => void;
   /**
+   * Called on EVERY inbound signal on the connection — open, heartbeat, and any
+   * dispatched event — i.e. exactly what the zombie watchdog counts as proof the
+   * stream is alive.
+   *
+   * For a UI that must distinguish "the producer is idle" from "this view has
+   * gone deaf", this is the signal to use: payload handlers alone cannot tell
+   * them apart, because an idle producer emits none while its heartbeats keep
+   * arriving. Note a caller's own `heartbeat` handler is NEVER dispatched (this
+   * module consumes that event), so this callback is the only way to observe it.
+   *
+   * Fires often (≥ once per server heartbeat), so keep it cheap — record a
+   * timestamp, do not re-render on every call. Throwing is swallowed.
+   */
+  onSignal?: () => void;
+  /**
    * Called when maxConsecutiveFailures is hit, or when EventSource
    * construction throws. NOT called for normal reconnect cycles.
    */
@@ -170,6 +185,27 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
     }, cfg.zombieTimeoutMs);
   };
 
+  /**
+   * ONE seam for "something arrived on this connection".
+   *
+   * The zombie watchdog already had a precise notion of inbound liveness —
+   * heartbeats included — but kept it entirely private, so a caller wanting to
+   * show "this view may be behind" had to re-derive it from the handlers it can
+   * see. Those are payload events, which an IDLE producer never emits, so that
+   * derivation reports a healthy-but-quiet stream as dead. Heartbeats are the
+   * only signal that separates the two, and they were unobservable: the loop
+   * below deliberately skips a caller's `heartbeat` handler because this module
+   * consumes it.
+   *
+   * Routing both through one function is what keeps the caller's notion of
+   * liveness identical to the watchdog's rather than a lookalike that can drift.
+   */
+  const signal = () => {
+    armZombieWatchdog();
+    try { opts.onSignal?.(); }
+    catch { /* an observer must never tear down the stream */ }
+  };
+
   const connect = () => {
     if (cancelled) return;
     if (!Ctor) {
@@ -199,19 +235,21 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       firstConnect = false;
       setStatus('open');
       opts.onOpen?.();
-      armZombieWatchdog();
+      signal();
     });
 
     // Heartbeat is liveness only — resets watchdog, no payload to dispatch.
+    // It is ALSO the only signal an idle producer emits, which is why `signal`
+    // (not a bare watchdog re-arm) is what publishes it to the caller.
     es.addEventListener('heartbeat', () => {
-      armZombieWatchdog();
+      signal();
     });
 
     // Wire all user handlers. Each treats receipt as a liveness signal.
     for (const [name, handler] of Object.entries(opts.handlers)) {
       if (name === 'heartbeat') continue; // already handled above
       es.addEventListener(name, (raw) => {
-        armZombieWatchdog();
+        signal();
         const ev = raw as MessageEvent;
         if (ev.lastEventId) lastEventId = ev.lastEventId;
         try { handler(ev.data as string, ev); }
@@ -221,7 +259,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
 
     // Also catch the default 'message' name in case server emits it.
     if (!('message' in opts.handlers)) {
-      es.addEventListener('message', () => armZombieWatchdog());
+      es.addEventListener('message', () => signal());
     }
 
     es.addEventListener('error', () => {

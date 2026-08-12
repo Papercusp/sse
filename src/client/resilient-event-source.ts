@@ -105,11 +105,31 @@ export interface ResilientEventSource {
   close(): void;
 }
 
+/**
+ * How long an ostensibly-open stream may deliver NOTHING — not even a heartbeat
+ * — before the zombie watchdog force-rebuilds it and publishes `'failing'`.
+ *
+ * EXPORTED BECAUSE IT IS A CEILING, not merely a default. Any UI that runs its
+ * own silence timer to say "this view may be behind" is racing this one, and
+ * loses: once this elapses the transport closes the socket and reports
+ * `'failing'`, which every such UI renders as reconnecting-or-worse. A UI
+ * threshold at or above this value is therefore UNREACHABLE — its state can
+ * never be entered, and unit tests that inject the inputs directly will not
+ * notice, because the unreachable combination is trivially constructible by
+ * hand.
+ *
+ * That is not hypothetical: the chat pane's staleness banner shipped with a 60s
+ * threshold on 2026-08-12 and was dead code from the first commit for exactly
+ * this reason (EI-20265888603098901). Consumers must key off this constant and
+ * stay strictly below it — `stream-freshness.ts` has the guard test.
+ */
+export const DEFAULT_ZOMBIE_TIMEOUT_MS = 45_000;
+
 const DEFAULTS = {
   initialBackoffMs: 1_000,
   maxBackoffMs: 30_000,
   jitter: 0.2,
-  zombieTimeoutMs: 45_000,
+  zombieTimeoutMs: DEFAULT_ZOMBIE_TIMEOUT_MS,
   maxConsecutiveFailures: 3,
   visibilityPauseMs: 60_000,
 };

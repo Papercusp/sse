@@ -93,6 +93,20 @@ export interface SseResponseOptions<TEvents extends Record<string, unknown>> {
   initialHeartbeat?: boolean;
 
   /**
+   * Close when the response body remains backpressured for this long. Default
+   * 30_000ms; set 0 to disable.
+   *
+   * A direct Web `Response` consumer can read a few frames and then abandon
+   * the reader without calling `cancel()`. In that state neither the request
+   * signal nor the stream's cancel hook fires, so a long-lived setup loop
+   * otherwise keeps producing forever and the unread body queue grows without
+   * bound. Normal HTTP adapters continuously drain this Web stream and apply
+   * socket backpressure separately, so sustained `desiredSize <= 0` here means
+   * the response itself has no active consumer.
+   */
+  backpressureTimeoutMs?: number;
+
+  /**
    * Optional ring-buffer replay. Called once at open AFTER lastEventId is
    * resolved; lib filters items whose id <= lastEventId.
    */
@@ -186,17 +200,43 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
   const ids = createIdAllocator(opts.lastEventId ?? 0);
   const heartbeatMs = opts.heartbeatMs ?? 10_000;
   const initialHeartbeat = opts.initialHeartbeat ?? true;
+  const backpressureTimeoutMs = Math.max(0, opts.backpressureTimeoutMs ?? 30_000);
   const sinceId = opts.lastEventId ?? 0;
 
   let closed = false;
   let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let backpressureTimer: ReturnType<typeof setTimeout> | null = null;
   const closeHandlers: Array<() => void> = [];
+
+  const clearBackpressureTimer = (): void => {
+    if (!backpressureTimer) return;
+    clearTimeout(backpressureTimer);
+    backpressureTimer = null;
+  };
+
+  const trackBackpressure = (): void => {
+    if (closed || !controllerRef || backpressureTimeoutMs === 0) return;
+    const desiredSize = controllerRef.desiredSize;
+    if (desiredSize == null || desiredSize > 0) {
+      clearBackpressureTimer();
+      return;
+    }
+    if (backpressureTimer) return;
+    backpressureTimer = setTimeout(() => {
+      backpressureTimer = null;
+      if (!closed && controllerRef != null && (controllerRef.desiredSize ?? 1) <= 0) {
+        runClose();
+      }
+    }, backpressureTimeoutMs);
+    if (typeof backpressureTimer.unref === 'function') backpressureTimer.unref();
+  };
 
   const enqueue = (bytes: Uint8Array): void => {
     if (closed || !controllerRef) return;
     try {
       controllerRef.enqueue(bytes);
+      trackBackpressure();
     } catch {
       // Controller already closed by upstream; mark closed and run cleanup.
       runClose();
@@ -210,6 +250,7 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
+    clearBackpressureTimer();
     // Run handlers in registration order; swallow errors so one bad handler
     // doesn't block the others.
     for (const fn of closeHandlers) {
@@ -357,6 +398,11 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
     },
     cancel() {
       runClose();
+    },
+    pull() {
+      // A pull means the consumer is draining again. The next enqueue will
+      // re-arm the deadline if it falls behind once more.
+      clearBackpressureTimer();
     },
   });
 

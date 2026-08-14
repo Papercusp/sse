@@ -36,19 +36,19 @@ describe('@papercusp/sse package contract', () => {
         types: './src/index.ts',
         import: './src/index.ts',
         require: './dist/index.js',
-        default: './src/index.ts',
+        default: './dist/index.js',
       },
       './react': {
         types: './src/react.ts',
         import: './src/react.ts',
         require: './dist/react.js',
-        default: './src/react.ts',
+        default: './dist/react.js',
       },
       './postgres': {
         types: './src/postgres.ts',
         import: './src/postgres.ts',
         require: './dist/postgres.js',
-        default: './src/postgres.ts',
+        default: './dist/postgres.js',
       },
     });
   });

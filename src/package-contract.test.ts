@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,8 +26,8 @@ const manifest = JSON.parse(
 ) as PackageManifest;
 
 describe('@papercusp/sse package contract', () => {
-  it('routes web imports to source and Node requires to built CommonJS', () => {
-    expect(manifest.type).toBe('commonjs');
+  it('routes ESM imports to source and Node requires to built CommonJS', () => {
+    expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('dist/index.js');
     expect(manifest.scripts.build).toBe('tsc -p tsconfig.json');
     expect(manifest.scripts.typecheck).toBe('tsc -p tsconfig.json --noEmit');
@@ -54,11 +55,31 @@ describe('@papercusp/sse package contract', () => {
   });
 
   it('loads the built main entry through the exact CommonJS package specifier', () => {
+    const distManifest = JSON.parse(
+      readFileSync(resolve(packageRoot, 'dist/package.json'), 'utf8'),
+    ) as { type: string };
     const requireFromPackage = createRequire(resolve(packageRoot, 'package.json'));
     const loaded = requireFromPackage('@papercusp/sse') as Record<string, unknown>;
 
+    expect(distManifest.type).toBe('commonjs');
     expect(loaded.sseResponse).toBeTypeOf('function');
     expect(loaded.sseResponseToNode).toBeTypeOf('function');
     expect(loaded.getChannel).toBeTypeOf('function');
+  });
+
+  it('links named source exports through the exact ESM package specifier', () => {
+    const output = execFileSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '--eval',
+        "import { getChannel } from '@papercusp/sse'; process.stdout.write(typeof getChannel);",
+      ],
+      { cwd: packageRoot, encoding: 'utf8' },
+    );
+
+    expect(output).toBe('function');
   });
 });

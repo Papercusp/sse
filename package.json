@@ -7,9 +7,6 @@
   "main": "dist/index.js",
   "types": "src/index.ts",
   "sideEffects": false,
-  "scripts": {
-    "test": "vitest run"
-  },
   "exports": {
     ".": {
       "types": "./src/index.ts",

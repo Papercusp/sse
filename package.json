@@ -1,30 +1,39 @@
 {
   "name": "@papercusp/sse",
-  "type": "module",
+  "type": "commonjs",
   "version": "0.0.1",
   "private": true,
   "description": "Spec-compliant Server-Sent Events primitives — server response builder, in-process channel bus, PG NOTIFY bridge, resilient EventSource client, React hook.",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
   "types": "src/index.ts",
   "sideEffects": false,
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts",
+      "require": "./dist/index.js",
       "default": "./src/index.ts"
     },
     "./react": {
       "types": "./src/react.ts",
       "import": "./src/react.ts",
+      "require": "./dist/react.js",
       "default": "./src/react.ts"
     },
     "./postgres": {
       "types": "./src/postgres.ts",
       "import": "./src/postgres.ts",
+      "require": "./dist/postgres.js",
       "default": "./src/postgres.ts"
     }
   },
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "peerDependencies": {

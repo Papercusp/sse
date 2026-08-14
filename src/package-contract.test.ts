@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 type ExportTarget = {
   types: string;
@@ -25,11 +25,18 @@ const manifest = JSON.parse(
   readFileSync(resolve(packageRoot, 'package.json'), 'utf8'),
 ) as PackageManifest;
 
+beforeAll(() => {
+  execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
+    cwd: packageRoot,
+    stdio: 'pipe',
+  });
+});
+
 describe('@papercusp/sse package contract', () => {
   it('routes ESM imports to source and Node requires to built CommonJS', () => {
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('dist/index.js');
-    expect(manifest.scripts.build).toBe('tsc -p tsconfig.json');
+    expect(manifest.scripts.build).toMatch(/^tsc -p tsconfig\.json && node -e /);
     expect(manifest.scripts.typecheck).toBe('tsc -p tsconfig.json --noEmit');
 
     expect(manifest.exports).toEqual({

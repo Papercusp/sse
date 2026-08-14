@@ -16,7 +16,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "declaration": true,
-    "ignoreDeprecations": "5.0",
+    "ignoreDeprecations": "6.0",
     "types": ["vitest/globals"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

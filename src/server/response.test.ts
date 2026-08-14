@@ -266,6 +266,44 @@ describe('sseResponse — onClose handler', () => {
   });
 });
 
+describe('sseResponse — abandoned direct reader backpressure', () => {
+  it('closes after the default deadline when a reader stops without canceling', async () => {
+    vi.useFakeTimers();
+    try {
+      const { req } = makeRequest();
+      const cleanup = vi.fn();
+      let emit!: (n: number) => void;
+      const res = sseResponse<{ tick: { n: number } }>({
+        signal: req.signal,
+        heartbeatMs: 0,
+        initialHeartbeat: false,
+        setup: (sink) => {
+          sink.onClose(cleanup);
+          emit = (n) => sink.event('tick', { n });
+          emit(1);
+        },
+      });
+      const reader = res.body!.getReader();
+
+      // Drain one frame, then reproduce a direct probe that simply stops
+      // calling read() without aborting its Request or canceling the reader.
+      expect((await reader.read()).done).toBe(false);
+      emit(2);
+
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(cleanup).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cleanup).toHaveBeenCalledTimes(1);
+
+      // The already-buffered frame is still readable, then the stream ends.
+      expect((await reader.read()).done).toBe(false);
+      expect((await reader.read()).done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('sseResponse — setup error handling', () => {
   it('emits an `error` event then closes when setup rejects', async () => {
     const { req } = makeRequest();

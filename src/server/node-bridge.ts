@@ -23,6 +23,12 @@ export interface NodeResponseLike {
   end(): void;
   /** Optional: used to tear the socket down on a mid-stream read error. */
   destroy?(err?: Error): void;
+  /** Optional (Node ServerResponse has it): await 'drain' for backpressure, and
+   *  'close'/'error' so a dead client never wedges the pump. P2-4. */
+  once?(event: 'drain' | 'close' | 'error', cb: () => void): void;
+  /** Optional liveness flags — stop pumping once the socket is torn down. */
+  destroyed?: boolean;
+  writableEnded?: boolean;
 }
 
 /**
@@ -62,11 +68,53 @@ async function pumpWebBodyToNode(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value) res.write(value);
+      if (value) {
+        // P2-4 (operator-scalability-event-loop-2026-06-16): honor TCP
+        // backpressure. `res.write()` returns false when the kernel/socket send
+        // buffer is full; if we kept reading + writing regardless, a slow (or
+        // hung) client would make Node buffer every SSE frame in heap —
+        // unbounded memory growth on the serving host under many slow readers.
+        // So when write() signals congestion, PAUSE the source until 'drain'
+        // (or the socket closes), back-propagating backpressure to the producer.
+        const ok = res.write(value);
+        if (ok === false && typeof res.once === 'function') {
+          await waitForDrain(res);
+        }
+      }
+      // Socket torn down mid-stream (client gone / errored) — stop pumping.
+      if (res.destroyed || res.writableEnded) break;
     }
-    res.end();
+    if (!res.writableEnded) res.end();
   } catch (err) {
     if (res.destroy) res.destroy(err instanceof Error ? err : new Error(String(err)));
     else res.end();
+  } finally {
+    // If we bailed before the source drained, tell it to stop producing so its
+    // own cleanup (heartbeat timer, etc.) runs. No-op after normal completion.
+    void reader.cancel().catch(() => {});
   }
+}
+
+/**
+ * Resolve when the Node response can accept more writes ('drain'), or when the
+ * socket closes/errors (so a dead client never wedges the pump). A generous
+ * unref'd timeout is the final backstop against a connection that fires neither.
+ */
+function waitForDrain(res: NodeResponseLike): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const done = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, 30_000);
+    if (typeof (timer as { unref?: () => void }).unref === 'function') {
+      (timer as { unref: () => void }).unref();
+    }
+    res.once?.('drain', done);
+    res.once?.('close', done);
+    res.once?.('error', done);
+  });
 }

@@ -17,4 +17,14 @@ export type SyncSseEventVocabulary<TPayload = unknown> = {
   invalidate: { name: string; args?: unknown; tsMs?: number };
   /** Liveness ping. Always emitted by the lib's heartbeat timer. */
   heartbeat: { tsMs: number };
+  /**
+   * Resume-integrity fallback (reserved control event; emitted by `sseResponse`
+   * when `resumeBounds` is wired and a reconnecting client's `Last-Event-ID` is no
+   * longer recoverable from the buffer). `reason: 'gap'` = the needed events were
+   * evicted from the ring; `reason: 'ahead'` = the client's id is past the source
+   * max (the channel/process restarted and ids reset). The client MUST discard its
+   * local baseline and refetch the full snapshot, then resume live. No `id` (not
+   * part of the resumable event log).
+   */
+  resync: { reason: 'gap' | 'ahead'; fromId: number; floorId: number; maxId: number };
 };

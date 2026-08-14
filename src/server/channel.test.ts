@@ -188,6 +188,33 @@ describe('getChannel — GC after done + zero subscribers', () => {
   });
 });
 
+describe('getChannel — idle-reap backstop (never-done channels, EI-127)', () => {
+  it('reaps a zero-subscriber channel idle past idleReapMs even WITHOUT done()', () => {
+    vi.useFakeTimers();
+    // A producer publishes then dies WITHOUT ever calling done() (e.g. a crashed
+    // subprocess). scheduleGC never fires (the channel is not isDone), so only
+    // the idle reaper can collect it — this is the EI-127 leak class.
+    const ch = getChannel<string>('test:idle', { idleReapMs: 5_000 });
+    ch.publish('x');
+    expect(ch.isDone).toBe(false);
+    expect(listChannels().some((c) => c.key === 'test:idle')).toBe(true);
+    // First reaper sweep (60s) sees now-lastActivity (60s) > idleReapMs (5s) → reap.
+    vi.advanceTimersByTime(61_000);
+    expect(listChannels().some((c) => c.key === 'test:idle')).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('does NOT reap a channel that still has an active subscriber', () => {
+    vi.useFakeTimers();
+    const ch = getChannel<string>('test:idle-active', { idleReapMs: 1_000 });
+    ch.subscribe(); // adds a subscriber synchronously → subs.size > 0
+    ch.publish('x');
+    vi.advanceTimersByTime(180_000); // several sweeps, far past idleReapMs
+    expect(listChannels().some((c) => c.key === 'test:idle-active')).toBe(true);
+    vi.useRealTimers();
+  });
+});
+
 describe('getChannel — globalThis pinning (HMR survival)', () => {
   it('uses the globalThis-pinned registry', () => {
     const ch = getChannel<string>('test:hmr');

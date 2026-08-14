@@ -7,7 +7,7 @@
  * if the connection drops before a terminal event — RESUMES the same logical
  * stream with `Last-Event-ID` + a caller-built resume body, under bounded
  * exponential backoff. The server is expected to keep the turn alive and replay
- * missed events on resume (the scout reconnect-safe protocol).
+ * missed events on resume (the prospector reconnect-safe protocol).
  *
  * Yields each JSON-decoded event payload; stops after the first terminal event.
  * Non-JSON `data`, empty `data`, and `skipEvents` (default: heartbeat) are
@@ -30,7 +30,7 @@ export interface ResilientPostStreamOptions {
   buildBody: (resume: ResilientPostResume | null) => unknown;
   /** True when a decoded payload is terminal (ends the stream — e.g. `done`/`error`). */
   isTerminal: (data: unknown) => boolean;
-  /** Response header carrying the resumable turn id (e.g. `X-Scout-Turn-Id`). */
+  /** Response header carrying the resumable turn id (e.g. `X-Prospector-Turn-Id`). */
   turnIdHeader?: string;
   /** Extra request headers (Content-Type: application/json is always set). */
   headers?: Record<string, string>;

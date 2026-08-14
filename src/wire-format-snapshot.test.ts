@@ -7,7 +7,7 @@
  *   1. A major version bump of @papercusp/sse.
  *   2. A coordinated migration of every shipped desktop client that
  *      consumes events from any production SSE route (notably the
- *      ZeroSync SSEAdapter mounted by HarnessZeroProvider when
+ *      ZeroSync SSEAdapter mounted by HarnessSyncProvider when
  *      runtime === 'tauri').
  *
  * Casual edits to this snapshot WILL break desktop sync silently. If you

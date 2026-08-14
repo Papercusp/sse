@@ -25,7 +25,21 @@ export { encodeFrame, heartbeatFrame, commentFrame } from './wire/format';
 export type { SseFrame } from './wire/format';
 
 // Client primitives (framework-free)
-export { createResilientEventSource } from './client/resilient-event-source';
+export {
+  createResilientEventSource,
+  // A CEILING for any consumer running its own silence timer — see the constant.
+  DEFAULT_ZOMBIE_TIMEOUT_MS,
+  // Desktop endpoint-IPC has a tighter stream ceiling than the generic wrapper.
+  DESKTOP_IPC_STREAM_IDLE_TIMEOUT_MS,
+} from './client/resilient-event-source';
+// Live standing-stream registry (per-host connection budget — see stream-registry).
+export {
+  listLiveStreams,
+  countLiveStreamsForHost,
+  registerLiveStream,
+  STREAM_BUDGET_WARN_AT,
+} from './client/stream-registry';
+export type { LiveStreamRecord } from './client/stream-registry';
 export type {
   ResilientEventSource,
   ResilientEventSourceOptions,

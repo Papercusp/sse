@@ -134,9 +134,15 @@ data:  {"name":"<queryName>","args":<args>?,"tsMs":<unixMs>?}
 event: heartbeat
 data:  {"tsMs":<unixMs>}
 
+event: resync                 (control — emitted only when `resumeBounds` is wired)
+data:  {"reason":"gap"|"ahead","fromId":<int>,"floorId":<int>,"maxId":<int>}
+       Client's Last-Event-ID is unrecoverable from the buffer ('gap' = evicted,
+       'ahead' = past source max after a restart). Client MUST discard local state
+       and refetch the full snapshot, then resume live. Partial replay is skipped.
+
 === id field ===
 Monotonic numeric. Assigned by sink/channel. Present on update/invalidate.
-Absent on heartbeat (heartbeats are not part of the resumable event log).
+Absent on heartbeat + resync (control events, not part of the resumable event log).
 
 === Encoding ===
 UTF-8, no BOM.
@@ -177,5 +183,5 @@ type safety and document the prefix.
 
 ## Status
 
-Initial implementation 2026-05-11. See `apps/operator/providers/HarnessZeroProvider.tsx`
+Initial implementation 2026-05-11. See `apps/operator/providers/HarnessSyncProvider.tsx`
 for the canonical desktop-vs-web transport-selection rule that this library serves.

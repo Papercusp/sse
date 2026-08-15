@@ -17,6 +17,7 @@ type PackageManifest = {
   type: string;
   main: string;
   scripts: Record<string, string>;
+  devDependencies: Record<string, string>;
   exports: Record<string, ExportTarget>;
 };
 
@@ -33,6 +34,16 @@ beforeAll(() => {
 });
 
 describe('@papercusp/sse package contract', () => {
+  it('uses the package-owned TypeScript 5.9 compiler boundary', () => {
+    const requireFromPackage = createRequire(resolve(packageRoot, 'package.json'));
+    const compilerManifest = JSON.parse(
+      readFileSync(requireFromPackage.resolve('typescript/package.json'), 'utf8'),
+    ) as { version: string };
+
+    expect(manifest.devDependencies.typescript).toBe('~5.9.3');
+    expect(compilerManifest.version).toMatch(/^5\.9\./);
+  });
+
   it('routes ESM imports to source and Node requires to built CommonJS', () => {
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('dist/index.js');

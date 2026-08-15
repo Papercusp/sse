@@ -6,7 +6,7 @@
     "rootDir": "src",
     "jsx": "react-jsx",
     "module": "CommonJS",
-    "moduleResolution": "bundler",
+    "moduleResolution": "Node",
     "noEmit": false,
     "esModuleInterop": true,
     "strict": true,

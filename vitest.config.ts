@@ -1,3 +1,4 @@
+import { sharedHostWorkerCap } from '@papercusp/test-config/vitest-config';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -15,5 +16,8 @@ export default defineConfig({
     // and excluded from the default run. Run them via `npx vitest run --include 'src/**/*.pg.test.ts'`.
     exclude: ['node_modules', 'dist', '**/*.pg.test.ts'],
     testTimeout: 15_000,
+    // See libs/sync/vitest.config.ts — every project in the root topology must
+    // agree on maxWorkers or vitest 4 refuses the run.
+    ...sharedHostWorkerCap(),
   },
 });

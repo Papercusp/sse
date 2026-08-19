@@ -12,6 +12,8 @@
  * no `node:stream` import, so the package stays dependency-free and Web-first.
  */
 
+import { unrefTimer } from './unref';
+
 /**
  * The slice of a Node `http.ServerResponse` this bridge needs. Express's `res`
  * (which extends `ServerResponse`) satisfies it structurally.

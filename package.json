@@ -45,6 +45,7 @@
     "postgres": { "optional": true }
   },
   "devDependencies": {
+    "@papercusp/test-config": "*",
     "@types/react": "^19.0.0",
     "@testing-library/react": "^16.0.0",
     "react": "^19.0.0",

@@ -19,6 +19,7 @@
 
 import { encodeFrame, heartbeatFrame } from '../wire/format';
 import { createIdAllocator } from '../wire/ids';
+import { unrefTimer } from './unref';
 
 export interface SseSink<TEvents extends Record<string, unknown> = Record<string, unknown>> {
   /**

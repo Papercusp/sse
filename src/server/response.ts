@@ -230,7 +230,7 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
         runClose();
       }
     }, backpressureTimeoutMs);
-    if (typeof backpressureTimer.unref === 'function') backpressureTimer.unref();
+    unrefTimer(backpressureTimer);
   };
 
   const enqueue = (bytes: Uint8Array): void => {

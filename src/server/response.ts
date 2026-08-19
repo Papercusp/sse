@@ -383,7 +383,7 @@ export function sseResponse<TEvents extends Record<string, unknown> = Record<str
           if (closed) return;
           enqueue(heartbeatFrame());
         }, heartbeatMs);
-        if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref();
+        unrefTimer(heartbeatTimer);
       }
 
       // Step 5: setup. Async — runs concurrently with anything else the

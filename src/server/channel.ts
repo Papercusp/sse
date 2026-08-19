@@ -17,6 +17,7 @@
  */
 
 import { createIdAllocator, type IdAllocator } from '../wire/ids';
+import { unrefTimer } from './unref';
 
 // Brand-neutral, package-internal key so the singleton survives HMR
 // without colliding with other libs on globalThis. No consuming-app or

@@ -285,9 +285,7 @@ function ensureReaper(): void {
       }
     }
   }, REAPER_SWEEP_MS);
-  if (typeof (reaperTimer as { unref?: () => void }).unref === 'function') {
-    (reaperTimer as { unref: () => void }).unref();
-  }
+  unrefTimer(reaperTimer);
 }
 
 function scheduleGC<T>(state: ChannelState<T>): void {
@@ -298,7 +296,7 @@ function scheduleGC<T>(state: ChannelState<T>): void {
       registry().delete(state.key);
     }
   }, state.opts.gcDelayMs);
-  if (typeof state.gcTimer.unref === 'function') state.gcTimer.unref();
+  unrefTimer(state.gcTimer);
 }
 
 export function getChannel<T>(key: string, opts: ChannelOptions = {}): BusChannel<T> {

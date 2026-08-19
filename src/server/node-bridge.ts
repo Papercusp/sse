@@ -112,9 +112,7 @@ function waitForDrain(res: NodeResponseLike): Promise<void> {
       resolve();
     };
     const timer = setTimeout(done, 30_000);
-    if (typeof (timer as { unref?: () => void }).unref === 'function') {
-      (timer as { unref: () => void }).unref();
-    }
+    unrefTimer(timer);
     res.once?.('drain', done);
     res.once?.('close', done);
     res.once?.('error', done);

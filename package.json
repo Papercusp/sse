@@ -32,7 +32,7 @@
     "src"
   ],
   "scripts": {
-    "build": "node -e \"const { spawnSync } = require('node:child_process'); const { existsSync, mkdirSync, rmSync, writeFileSync } = require('node:fs'); rmSync('dist', { recursive: true, force: true }); mkdirSync('dist', { recursive: true }); const result = spawnSync(process.platform === 'win32' ? 'tsc.cmd' : 'tsc', ['-p', 'tsconfig.json'], { stdio: 'inherit' }); const exitCode = result.status ?? 1; const emitted = existsSync('dist/index.js'); if (emitted) writeFileSync('dist/package.json', JSON.stringify({ type: 'commonjs' }, null, 2) + '\\\\n'); else console.error('ERROR: tsc did not emit dist/index.js; refusing to write dist/package.json'); process.exit(emitted ? exitCode : (exitCode || 1))\"",
+    "build": "node -e \"const { spawnSync } = require('node:child_process'); const { existsSync, mkdirSync, rmSync, writeFileSync } = require('node:fs'); rmSync('dist', { recursive: true, force: true }); mkdirSync('dist', { recursive: true }); const result = spawnSync(process.platform === 'win32' ? 'tsc.cmd' : 'tsc', ['-p', 'tsconfig.json'], { stdio: 'inherit' }); const exitCode = result.status ?? 1; const emitted = existsSync('dist/index.js'); if (emitted) writeFileSync('dist/package.json', JSON.stringify({ type: 'commonjs' }, null, 2) + '\\n'); else console.error('ERROR: tsc did not emit dist/index.js; refusing to write dist/package.json'); process.exit(emitted ? exitCode : (exitCode || 1))\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

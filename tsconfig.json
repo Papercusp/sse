@@ -6,7 +6,7 @@
     "rootDir": "src",
     "jsx": "react-jsx",
     "module": "CommonJS",
-    "moduleResolution": "Node",
+    "moduleResolution": "Bundler",
     "noEmit": false,
     "esModuleInterop": true,
     "strict": true,
@@ -16,7 +16,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "declaration": true,
-    "ignoreDeprecations": "5.0",
     "types": ["vitest/globals", "node"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

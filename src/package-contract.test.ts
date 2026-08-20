@@ -21,10 +21,21 @@ type PackageManifest = {
   exports: Record<string, ExportTarget>;
 };
 
+type TypeScriptConfig = {
+  compilerOptions: {
+    module: string;
+    moduleResolution: string;
+    ignoreDeprecations: string;
+  };
+};
+
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(
   readFileSync(resolve(packageRoot, 'package.json'), 'utf8'),
 ) as PackageManifest;
+const tsconfig = JSON.parse(
+  readFileSync(resolve(packageRoot, 'tsconfig.json'), 'utf8'),
+) as TypeScriptConfig;
 
 beforeAll(() => {
   execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
@@ -42,6 +53,11 @@ describe('@papercusp/sse package contract', () => {
 
     expect(manifest.devDependencies.typescript).toBe('~5.9.3');
     expect(compilerManifest.version).toMatch(/^5\.9\./);
+    expect(tsconfig.compilerOptions).toMatchObject({
+      module: 'CommonJS',
+      moduleResolution: 'Node',
+      ignoreDeprecations: '5.0',
+    });
   });
 
   it('routes ESM imports to source and Node requires to built CommonJS', () => {

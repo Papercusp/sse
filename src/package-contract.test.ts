@@ -61,12 +61,12 @@ describe('@papercusp/sse package contract', () => {
     expect(nativeManifest).toMatchObject({
       name: 'typescript',
       version: '7.0.2',
-      bin: { tsc: 'bin/tsc' },
+      bin: { tsc: './bin/tsc' },
     });
     expect(compilerManifest).toMatchObject({
       name: '@typescript/typescript6',
       version: '6.0.2',
-      bin: { tsc6: 'bin/tsc6' },
+      bin: { tsc6: './bin/tsc6' },
     });
     expect(tsconfig.compilerOptions).toMatchObject({
       module: 'CommonJS',

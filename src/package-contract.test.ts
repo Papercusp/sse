@@ -45,14 +45,29 @@ beforeAll(() => {
 });
 
 describe('@papercusp/sse package contract', () => {
-  it('uses the package-owned TypeScript 6 compiler boundary', () => {
+  it('uses native TypeScript 7 with the official TypeScript 6 API compatibility boundary', () => {
     const requireFromPackage = createRequire(resolve(packageRoot, 'package.json'));
     const compilerManifest = JSON.parse(
       readFileSync(requireFromPackage.resolve('typescript/package.json'), 'utf8'),
-    ) as { version: string };
+    ) as { name: string; version: string; bin: Record<string, string> };
+    const nativeManifest = JSON.parse(
+      readFileSync(requireFromPackage.resolve('@typescript/native/package.json'), 'utf8'),
+    ) as { name: string; version: string; bin: Record<string, string> };
 
-    expect(manifest.devDependencies.typescript).toBe('~6.0.0');
-    expect(compilerManifest.version).toMatch(/^6\.0\./);
+    expect(manifest.devDependencies['@typescript/native']).toBe('npm:typescript@7.0.2');
+    expect(manifest.devDependencies.typescript).toBe(
+      'npm:@typescript/typescript6@6.0.2',
+    );
+    expect(nativeManifest).toMatchObject({
+      name: 'typescript',
+      version: '7.0.2',
+      bin: { tsc: 'bin/tsc' },
+    });
+    expect(compilerManifest).toMatchObject({
+      name: '@typescript/typescript6',
+      version: '6.0.2',
+      bin: { tsc6: 'bin/tsc6' },
+    });
     expect(tsconfig.compilerOptions).toMatchObject({
       module: 'CommonJS',
       moduleResolution: 'Bundler',

@@ -45,13 +45,14 @@
     "postgres": { "optional": true }
   },
   "devDependencies": {
+    "@typescript/native": "npm:typescript@7.0.2",
     "@papercusp/test-config": "*",
     "@types/react": "^19.0.0",
     "@testing-library/react": "^16.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "strip-literal": "^3.1.0",
-    "typescript": "~6.0.0",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "vitest": "^3.0.0"
   }
 }

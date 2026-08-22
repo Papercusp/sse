@@ -81,7 +81,10 @@ describe('@papercusp/sse package contract', () => {
     expect(manifest.scripts.build).toContain('tsc');
     expect(manifest.scripts.build).toContain('dist/index.js');
     expect(manifest.scripts.build).not.toContain('&&');
-    expect(manifest.scripts.typecheck).toBe('tsc -p tsconfig.json --noEmit');
+    for (const script of [manifest.scripts.build, manifest.scripts.typecheck]) {
+      expect(script).toContain("require.resolve('@typescript/native/package.json')");
+    }
+    expect(manifest.scripts.typecheck).toContain("'-p', 'tsconfig.json', '--noEmit'");
 
     expect(manifest.exports).toEqual({
       '.': {

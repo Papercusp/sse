@@ -16,7 +16,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createResilientEventSource } from './resilient-event-source';
+import { createResilientEventSource as createResilientEventSourceRaw } from './resilient-event-source';
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -39,6 +39,13 @@ class FakeEventSource {
   fireOpen() { this.fire('open'); }
 }
 
+const activeSources: Array<ReturnType<typeof createResilientEventSourceRaw>> = [];
+const createResilientEventSource = (...args: Parameters<typeof createResilientEventSourceRaw>) => {
+  const source = createResilientEventSourceRaw(...args);
+  activeSources.push(source);
+  return source;
+};
+
 const latest = () => FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
 
 function setVisibilityState(state: 'visible' | 'hidden') {
@@ -52,7 +59,10 @@ beforeEach(() => {
   setVisibilityState('visible');
   vi.useFakeTimers();
 });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  for (const source of activeSources.splice(0)) source.close();
+  vi.useRealTimers();
+});
 
 describe('createResilientEventSource — visibility pause', () => {
   it('does NOT register a visibilitychange listener when no EventSource ctor exists (P-071)', () => {
@@ -179,10 +189,8 @@ describe('createResilientEventSource — bfcache pagehide/pageshow', () => {
     expect(onStatusChange).toHaveBeenLastCalledWith('idle');
   });
 
-  // NOTE: wrappers created by EARLIER tests in this file are never closed and
-  // (correctly) also react to window-level pagehide/pageshow — so these tests
-  // count only instances carrying their own unique URL instead of asserting
-  // on the global instance count.
+  // Keep these assertions scoped to the stream under test so reconnect counts
+  // stay explicit even when the wrapper creates more than one EventSource.
   const withUrl = (url: string) => FakeEventSource.instances.filter((i) => i.url === url);
   const latestWithUrl = (url: string) => withUrl(url)[withUrl(url).length - 1]!;
 

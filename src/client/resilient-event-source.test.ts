@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createResilientEventSource } from './resilient-event-source';
+import { createResilientEventSource as createResilientEventSourceRaw } from './resilient-event-source';
 
 // ── Fake EventSource ──────────────────────────────────────────────────────
 //
@@ -44,9 +44,20 @@ class FakeEventSource {
   fireDrop() { this.readyState = 0; this.fire('error'); }
 }
 
+const activeSources: Array<ReturnType<typeof createResilientEventSourceRaw>> = [];
+const createResilientEventSource = (...args: Parameters<typeof createResilientEventSourceRaw>) => {
+  const source = createResilientEventSourceRaw(...args);
+  activeSources.push(source);
+  return source;
+};
+
 beforeEach(() => {
   FakeEventSource.instances = [];
   FakeEventSource.lastUrl = null;
+});
+
+afterEach(() => {
+  for (const source of activeSources.splice(0)) source.close();
 });
 
 const latest = () => FakeEventSource.instances[FakeEventSource.instances.length - 1]!;

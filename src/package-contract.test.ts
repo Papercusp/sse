@@ -75,6 +75,21 @@ describe('@papercusp/sse package contract', () => {
     expect(tsconfig.compilerOptions.ignoreDeprecations).toBeUndefined();
   });
 
+  it('uses the hoisted monorepo Vitest 4 toolchain instead of a package-local duplicate', () => {
+    const requireFromPackage = createRequire(resolve(packageRoot, 'package.json'));
+    const vitestManifestPath = requireFromPackage.resolve('vitest/package.json');
+    const vitestManifest = JSON.parse(
+      readFileSync(vitestManifestPath, 'utf8'),
+    ) as { name: string; version: string };
+
+    expect(manifest.devDependencies.vitest).toBe('^4.1.4');
+    expect(vitestManifest).toMatchObject({ name: 'vitest' });
+    expect(vitestManifest.version).toMatch(/^4\.1\./);
+    expect(dirname(vitestManifestPath)).not.toBe(
+      resolve(packageRoot, 'node_modules/vitest'),
+    );
+  });
+
   it('routes ESM imports to source and Node requires to built CommonJS', () => {
     expect(manifest.type).toBe('module');
     expect(manifest.main).toBe('dist/index.js');

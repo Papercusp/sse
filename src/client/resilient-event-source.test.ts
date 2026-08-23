@@ -162,7 +162,7 @@ describe('createResilientEventSource — reconnect + backoff + jitter', () => {
     for (let i = 0; i < 10; i++) {
       FakeEventSource.instances = [];
       vi.clearAllTimers();
-      createResilientEventSource({
+      const source = createResilientEventSource({
         url: 'http://x/sse',
         handlers: {},
         initialBackoffMs: 1000,
@@ -178,6 +178,10 @@ describe('createResilientEventSource — reconnect + backoff + jitter', () => {
         if (FakeEventSource.instances.length === 2) { found = t; break; }
       }
       samples.push(found);
+      // Each iteration is an independent jitter sample. Release its registered
+      // connection before starting the next sample so this test does not create
+      // the exact standing-stream budget exhaustion the registry warns about.
+      source.close();
     }
     Math.random = orig;
     // All samples should fall within [800, 1200] (1000ms ±20%).

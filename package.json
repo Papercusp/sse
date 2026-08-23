@@ -53,6 +53,6 @@
     "react-dom": "^19.0.0",
     "strip-literal": "^3.1.0",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "vitest": "^3.0.0"
+    "vitest": "^4.1.4"
   }
 }

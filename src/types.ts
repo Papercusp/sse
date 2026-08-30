@@ -19,6 +19,16 @@ export type {
   ResilientEventSourceStatus,
 } from './client/resilient-event-source';
 export type {
+  ControlBroadcastChannel,
+  ControlBroadcastChannelCtor,
+  ControlDocumentLike,
+  ControlWindowLike,
+  CrossTabControlRole,
+  CrossTabControlState,
+  CrossTabControlStream,
+  CrossTabControlStreamOptions,
+} from './client/cross-tab-control-stream';
+export type {
   UseEventSourceOptions,
   UseEventSourceResult,
 } from './client/use-event-source';

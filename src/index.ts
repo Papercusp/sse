@@ -32,6 +32,18 @@ export {
   // Desktop endpoint-IPC has a tighter stream ceiling than the generic wrapper.
   DESKTOP_IPC_STREAM_IDLE_TIMEOUT_MS,
 } from './client/resilient-event-source';
+// Cross-tab control SSE: one visible owner per same-origin scope, with
+// BroadcastChannel fanout and a conservative one-source-per-tab fallback.
+export {
+  createCrossTabControlStream,
+  createCoordinatedEventSource,
+  createControlStream,
+  defaultControlChannelKey,
+  DEFAULT_CONTROL_ELECTION_WINDOW_MS,
+  DEFAULT_CONTROL_OWNER_HEARTBEAT_MS,
+  DEFAULT_CONTROL_OWNER_LEASE_MS,
+  DEFAULT_CONTROL_VISIBILITY_PAUSE_MS,
+} from './client/cross-tab-control-stream';
 // Live standing-stream registry (per-host connection budget — see stream-registry).
 export {
   listLiveStreams,
@@ -45,6 +57,16 @@ export type {
   ResilientEventSourceOptions,
   ResilientEventSourceStatus,
 } from './client/resilient-event-source';
+export type {
+  ControlBroadcastChannel,
+  ControlBroadcastChannelCtor,
+  ControlDocumentLike,
+  ControlWindowLike,
+  CrossTabControlRole,
+  CrossTabControlState,
+  CrossTabControlStream,
+  CrossTabControlStreamOptions,
+} from './client/cross-tab-control-stream';
 export { parseSseStream } from './client/parse-stream';
 export type { ParsedSseEvent } from './client/parse-stream';
 export { resilientPostStream, StreamIdleTimeoutError } from './client/resilient-post-stream';

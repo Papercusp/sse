@@ -337,8 +337,8 @@ export function createCrossTabControlStream(
   let ownerGeneration = 0;
   let sequence = 0;
   let lastSequence = 0;
-  let pageHidden = false;
   let lastOwnerValue: boolean | null = null;
+  let openNotifiedEpoch: string | null = null;
   const candidates = new Map<string, { visible: boolean; at: number }>();
   // BroadcastChannel preserves order per sender in browsers, but test doubles
   // and a few embedded bridges can deliver an already-queued heartbeat after
@@ -388,28 +388,28 @@ export function createCrossTabControlStream(
   };
 
   const clearElection = (): void => {
-    if (electionTimer) {
+    if (electionTimer !== null) {
       clearTimeout(electionTimer);
       electionTimer = null;
     }
   };
 
   const clearLease = (): void => {
-    if (leaseTimer) {
+    if (leaseTimer !== null) {
       clearTimeout(leaseTimer);
       leaseTimer = null;
     }
   };
 
   const clearHidden = (): void => {
-    if (hiddenTimer) {
+    if (hiddenTimer !== null) {
       clearTimeout(hiddenTimer);
       hiddenTimer = null;
     }
   };
 
   const stopOwnerHeartbeat = (): void => {
-    if (ownerHeartbeatTimer) {
+    if (ownerHeartbeatTimer !== null) {
       clearInterval(ownerHeartbeatTimer);
       ownerHeartbeatTimer = null;
     }
@@ -447,10 +447,10 @@ export function createCrossTabControlStream(
 
   const epoch = (): string => `${Date.now().toString(36)}-${tabId}-${++ownerGeneration}`;
 
-  const ownerMessage = (kind: 'owner' | 'heartbeat' = 'owner'): OwnerMessage => ({
+  const ownerMessage = (): OwnerMessage => ({
     v: PROTOCOL_VERSION,
     scope,
-    // `heartbeat` is represented by the same owner lease message. Keeping one
+    // Heartbeats are represented by the same owner lease message. Keeping one
     // wire shape means late joiners can recover from either a fresh election or
     // an ordinary renewal without another protocol branch.
     kind: 'owner',
@@ -459,7 +459,6 @@ export function createCrossTabControlStream(
     leaseUntil: Date.now() + ownerLeaseMs,
     status,
     visible: doc?.visibilityState !== 'hidden',
-    ...(kind === 'heartbeat' ? {} : {}),
   });
 
   const stopPhysicalSource = (): void => {
@@ -473,7 +472,7 @@ export function createCrossTabControlStream(
 
   const broadcastOwner = (): void => {
     if (!coordinationAvailable || role !== 'owner' || !ownerEpoch) return;
-    post(ownerMessage('heartbeat'));
+    post(ownerMessage());
   };
 
   const scheduleLease = (): void => {
@@ -515,6 +514,14 @@ export function createCrossTabControlStream(
 
   const startPhysicalSource = (): void => {
     if (cancelled || source) return;
+    const ctorAvailable = opts.eventSourceCtor
+      ?? (typeof globalThis !== 'undefined'
+        ? (globalThis as unknown as { EventSource?: typeof EventSource }).EventSource
+        : undefined);
+    if (!ctorAvailable) {
+      publishStatus('idle');
+      return;
+    }
     setPhysical(true);
     const sourceHandlers = opts.handlers ?? {};
     for (const [eventType, handler] of Object.entries(sourceHandlers)) {
@@ -630,10 +637,11 @@ export function createCrossTabControlStream(
       if (incomingOwner !== ownerTabId) return;
     }
     clearElection();
+    const ownerChanged = ownerTabId !== incomingOwner || ownerEpoch !== message.epoch;
     ownerTabId = incomingOwner;
     ownerEpoch = message.epoch;
     ownerLeaseUntil = Math.max(Date.now() + 1, message.leaseUntil);
-    lastSequence = 0;
+    if (ownerChanged) lastSequence = 0;
     // A hidden tab has deliberately relinquished (or never acquired) the
     // physical stream.  It may remember who currently owns the lease, but it
     // must stay paused until it becomes visible again; otherwise a heartbeat
@@ -644,7 +652,13 @@ export function createCrossTabControlStream(
       return;
     }
     setRole('follower');
-    publishStatus(validStatus(message.status) ? message.status : 'connecting');
+    const nextStatus = validStatus(message.status) ? message.status : 'connecting';
+    const shouldNotifyOpen = nextStatus === 'open' && openNotifiedEpoch !== message.epoch;
+    publishStatus(nextStatus);
+    if (shouldNotifyOpen) {
+      openNotifiedEpoch = message.epoch;
+      safeInvoke(opts.onOpen);
+    }
     scheduleLease();
   };
 
@@ -865,7 +879,6 @@ export function createCrossTabControlStream(
   };
 
   const onPageHide = (): void => {
-    pageHidden = true;
     clearHidden();
     if (!coordinationAvailable) return;
     if (role === 'owner') relinquish('pagehide');
@@ -877,7 +890,6 @@ export function createCrossTabControlStream(
   };
 
   const onPageShow = (): void => {
-    pageHidden = false;
     if (cancelled || !coordinationAvailable) return;
     if (doc?.visibilityState !== 'hidden' && (role === 'paused' || !ownerTabId)) {
       beginElection('pageshow');
@@ -942,9 +954,6 @@ export function createCrossTabControlStream(
     },
   };
 
-  // A pagehide that occurred during construction is intentionally ignored;
-  // the browser cannot dispatch it before the current synchronous turn ends.
-  void pageHidden;
   return handle;
 }
 

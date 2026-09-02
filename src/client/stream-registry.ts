@@ -36,6 +36,45 @@ export interface LiveStreamRecord {
  */
 export const STREAM_BUDGET_WARN_AT = 4;
 
+/**
+ * DELIBERATELY NOT `pinModuleState` (EI-22185890226391209 investigated this).
+ * The repo convention ("shared-lib singletons: pin through the primitive")
+ * assumes any two module records within a process SHOULD collapse into one
+ * shared instance. Two independent reasons say the opposite here:
+ *
+ * 1. BORROWABILITY (same reason already documented at ./  ../server/channel.ts
+ *    and tracked on EI-19479108855357092, still awaiting a plan Decision):
+ *    `libs/generic/*` are standalone, dependency-free submodules meant to be
+ *    borrowed as-is by projects that do not inherit this monorepo's hoisting.
+ *    Declaring `@papercusp/module-singleton` as a dependency, with no
+ *    `configure*()` seam to inject it through instead, couples this generic
+ *    lib to Papercusp for every downstream borrower.
+ *
+ * 2. THIS MODULE'S STATE IS INTENTIONALLY PER-REALM, not a process-wide
+ *    singleton that accidentally split. Every container below (live streams,
+ *    REALM_ID, peers, the channel) exists to represent exactly ONE execution
+ *    context — one document/iframe, each of which already has its own real
+ *    `globalThis` in a browser, so genuine separate realms are correctly
+ *    independent with NO pinning at all. `pinModuleState`'s
+ *    globalThis-under-Symbol.for sharing would be harmless for that legitimate
+ *    case (different real global objects never collide) but is actively wrong
+ *    for `stream-registry.cross-realm.test.ts`, whose entire method of
+ *    SIMULATING separate realms (`vi.resetModules()` + a fresh `import()`
+ *    within one test process, sharing one real `globalThis`) relies on two
+ *    module records NOT sharing state — precisely what pinning removes.
+ *    Applying the primitive here silently merges that test's two fake realms
+ *    into one and breaks its very first assertion ("two loads of the registry
+ *    do not share the live Map").
+ *
+ * Residual, unmeasured risk (this module accidentally double-evaluating
+ * WITHIN one real document, e.g. a bundler/symlink split): bounded and mostly
+ * self-healing. The two records would announce as ordinary peers over
+ * BroadcastChannel, so `countStreamsForHostAllRealms` still sums to the true
+ * total; the only effects are a duplicate console warning and a slightly more
+ * conservative yield cooldown — never a wrong count. `listModuleDuplications()`
+ * would confirm whether that split has ever actually happened in a real
+ * loader; nothing here indicates it has.
+ */
 const live = new Map<number, LiveStreamRecord>();
 let nextId = 1;
 const warnedHosts = new Set<string>();

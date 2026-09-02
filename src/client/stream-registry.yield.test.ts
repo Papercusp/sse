@@ -141,6 +141,37 @@ describe('which stream is chosen', () => {
   });
 });
 
+describe('re-entrancy', () => {
+  it('never picks the stream being registered as its own victim', async () => {
+    // The evaluation runs INSIDE registerLiveStream, so without a guard the
+    // arriving stream can be chosen to yield before its consumer holds the
+    // unregister fn — the close then cannot remove it from `live`, leaking a
+    // phantom into the very count this module exists to keep honest.
+    const r = await loadRealm();
+    for (let i = 0; i < r.STREAM_YIELD_AT - 1; i++) r.registerLiveStream(url(`f${i}`));
+
+    const onYieldRequested = vi.fn();
+    // This registration crosses the line AND is the only volunteer.
+    r.registerLiveStream(url('arriving'), { onYieldRequested });
+
+    expect(onYieldRequested).not.toHaveBeenCalled();
+    // The decisive assertion: the count still reflects reality.
+    expect(r.countLiveStreamsForHost(HOST)).toBe(r.STREAM_YIELD_AT);
+  });
+
+  it('yields that same stream on the NEXT contention event', async () => {
+    const r = await loadRealm();
+    for (let i = 0; i < r.STREAM_YIELD_AT - 1; i++) r.registerLiveStream(url(`f${i}`));
+    const onYieldRequested = vi.fn();
+    r.registerLiveStream(url('arriving'), { onYieldRequested });
+    expect(onYieldRequested).not.toHaveBeenCalled();
+
+    // Deferred, not forfeited.
+    r.registerLiveStream(url('next'));
+    expect(onYieldRequested).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('coming back', () => {
   it('invites a parked consumer back once the origin clears', async () => {
     const r = await loadRealm();

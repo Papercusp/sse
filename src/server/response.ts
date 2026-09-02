@@ -19,6 +19,7 @@
 
 import { encodeFrame, heartbeatFrame } from '../wire/format';
 import { createIdAllocator } from '../wire/ids';
+import { RESUME_CURSOR_PARAM } from '../wire/resume-cursor';
 import { unrefTimer } from './unref';
 
 export interface SseSink<TEvents extends Record<string, unknown> = Record<string, unknown>> {
@@ -187,12 +188,39 @@ export async function bridgeChannel<TItem, TEvents extends Record<string, unknow
   }
 }
 
-/** Parse the Last-Event-ID header as a positive integer; null if absent or invalid. */
+/**
+ * Parse the client's resume point as a positive integer; null if absent or invalid.
+ *
+ * Reads the `Last-Event-ID` HEADER first, then falls back to the
+ * {@link RESUME_CURSOR_PARAM} query parameter (WI-2141694).
+ *
+ * The fallback is not redundancy. A browser sets the header only when IT
+ * reconnects an EventSource instance it already owns; every deliberate close
+ * in `resilient-event-source.ts` (visibility pause, bfcache pagehide, zombie
+ * rebuild, backoff, manual `reconnect()`) constructs a NEW EventSource, which
+ * sends no header and cannot be given one. Without this, such a resume reads
+ * as a fresh subscriber and the stream either re-delivers the whole ring
+ * buffer or silently skips whatever was emitted while it was closed.
+ *
+ * Header WINS when both are present: the browser's own native reconnect knows
+ * the true instance cursor, and a stale param left on a URL must never
+ * override it.
+ */
 export function parseLastEventId(req: Request): number | null {
-  const raw = req.headers.get('Last-Event-ID');
+  const header = req.headers.get('Last-Event-ID');
+  const raw = header ?? readResumeCursorParam(req);
   if (!raw) return null;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** The query-param half of {@link parseLastEventId}. Never throws on a malformed url. */
+function readResumeCursorParam(req: Request): string | null {
+  try {
+    return new URL(req.url).searchParams.get(RESUME_CURSOR_PARAM);
+  } catch {
+    return null;
+  }
 }
 
 export function sseResponse<TEvents extends Record<string, unknown> = Record<string, unknown>>(

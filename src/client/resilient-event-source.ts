@@ -28,6 +28,7 @@
  */
 
 import { registerLiveStream } from './stream-registry';
+import { withResumeCursor } from '../wire/resume-cursor';
 
 export type ResilientEventSourceStatus = 'idle' | 'connecting' | 'open' | 'failing' | 'closed';
 
@@ -254,8 +255,21 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
       return;
     }
     setStatus('connecting');
+    // Carry the resume cursor in the URL. `lastEventId` has been tracked here
+    // since the module was written, but until WI-2141694 nothing READ it on
+    // the way back out: every path below that closes the socket (visibility
+    // pause, bfcache pagehide, zombie rebuild, backoff, manual reconnect())
+    // ends the EventSource instance, and a NEW instance sends no
+    // `Last-Event-ID` header — that header is instance state the browser owns
+    // and a caller cannot set. So a resumed stream presented itself to the
+    // server as a brand-new subscriber, which silently re-delivered the whole
+    // ring buffer (endpoints that supply `replay`) or silently skipped
+    // whatever arrived while we were closed (endpoints that do not).
+    // The header still wins server-side, so the browser's own native
+    // reconnect — which does hold the true cursor — is never second-guessed.
+    const connectUrl = withResumeCursor(url, lastEventId);
     try {
-      es = new Ctor(url, opts.withCredentials ? { withCredentials: true } : undefined);
+      es = new Ctor(connectUrl, opts.withCredentials ? { withCredentials: true } : undefined);
     } catch (e) {
       opts.onError?.(e as Error);
       setStatus('failing');
@@ -426,6 +440,12 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
     setUrl(next: string) {
       if (next === url) return;
       url = next;
+      // A different URL is a different stream, so the cursor from the old one
+      // does not address anything here. Harmless before WI-2141694 (nothing
+      // read `lastEventId`); now that connect() carries it, keeping it would
+      // resume a NEW subscription from a FOREIGN stream's id — asking the
+      // server to skip everything below an unrelated number.
+      lastEventId = null;
       es?.close();
       es = null;
       dropSlot();

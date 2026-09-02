@@ -94,6 +94,34 @@ export interface ResilientEventSourceOptions {
    * reopen on visibilitychange. Default false.
    */
   visibilityPause?: boolean;
+  /**
+   * Let the connection-budget registry ask this stream to step aside when the
+   * ORIGIN is at its connection cap, reconnecting once pressure clears
+   * (WI-2141694). Default **false**.
+   *
+   * ⚠ DEFAULT-OFF IS A CORRECTNESS DECISION, NOT TIMIDITY. A yield closes the
+   * socket and reopens it later carrying the resume cursor — which recovers
+   * everything missed ONLY on endpoints that serve `replay` from a ring
+   * buffer. Against an endpoint with no replay, the resumed stream starts at
+   * "now" and whatever was emitted while parked is simply gone. This wrapper
+   * cannot tell the two apart: `replay` is a server-side option it never sees.
+   * So the caller — which knows its endpoint — opts in. Turning this on by
+   * default would trade a visible hang for silent data loss, which is the
+   * same class of bug the resume cursor above exists to remove.
+   *
+   * Opt in for background/low-value streams against replay-backed endpoints;
+   * leave off for anything whose gap a user would notice.
+   */
+  yieldOnContention?: boolean;
+  /**
+   * Rank among same-origin streams when one must yield — HIGHER survives
+   * longer. Default 0. Only consulted when `yieldOnContention` is true.
+   *
+   * Ranking is the whole reason yielding is safe to enable: the registry is
+   * domain-free and cannot know a chat pane matters more than a poller, so
+   * "drop the oldest" would happily close the stream the user is watching.
+   */
+  streamPriority?: number;
   /** Delay before pausing when document hidden. Default 60_000. */
   visibilityPauseMs?: number;
   /**
@@ -178,11 +206,40 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
   let hiddenSinceTimer: ReturnType<typeof setTimeout> | null = null;
   let pausedByVisibility = false;
   let pausedByPageHide = false;
+  let pausedByContention = false;
   /** Unregister fn for this stream's per-host connection slot; null when we hold none. */
   let releaseSlot: (() => void) | null = null;
   const dropSlot = () => {
     releaseSlot?.();
     releaseSlot = null;
+  };
+
+  /**
+   * The connection budget asked us to step aside (WI-2141694).
+   *
+   * Deliberately the SAME shape as the visibility pause below — close, release
+   * the slot, go idle — because that pause/resume cycle already ships and is
+   * the proven path. The one difference is the trigger: visibility fires when
+   * nobody is watching, this can fire on a stream someone IS watching, which
+   * is why the caller had to opt in and rank itself first.
+   */
+  const yieldForContention = () => {
+    if (cancelled || !es) return;
+    pausedByContention = true;
+    es.close();
+    es = null;
+    dropSlot();
+    clearZombie();
+    clearReconnect();
+    setStatus('idle');
+  };
+
+  /** Pressure cleared — reconnect, carrying the resume cursor via connect(). */
+  const resumeAfterContention = () => {
+    if (cancelled || !pausedByContention) return;
+    pausedByContention = false;
+    backoffMs = cfg.initialBackoffMs;
+    connect();
   };
 
   const setStatus = (next: ResilientEventSourceStatus) => {
@@ -281,7 +338,16 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
     // it from construction — a CONNECTING socket occupies the slot too — and
     // release on every path that drops the socket below.
     releaseSlot?.();
-    releaseSlot = registerLiveStream(url);
+    releaseSlot = registerLiveStream(
+      url,
+      cfg.yieldOnContention
+        ? {
+            priority: opts.streamPriority ?? 0,
+            onYieldRequested: yieldForContention,
+            onResumeAllowed: resumeAfterContention,
+          }
+        : undefined,
+    );
 
     es.addEventListener('open', () => {
       backoffMs = cfg.initialBackoffMs;

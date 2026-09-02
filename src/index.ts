@@ -48,10 +48,17 @@ export {
 export {
   listLiveStreams,
   countLiveStreamsForHost,
+  countStreamsForHostAllRealms,
+  getStreamBudgetSnapshot,
   registerLiveStream,
+  PEER_STALE_AFTER_MS,
   STREAM_BUDGET_WARN_AT,
 } from './client/stream-registry';
-export type { LiveStreamRecord } from './client/stream-registry';
+export type {
+  BudgetChannel,
+  LiveStreamRecord,
+  StreamBudgetSnapshot,
+} from './client/stream-registry';
 export type {
   ResilientEventSource,
   ResilientEventSourceOptions,

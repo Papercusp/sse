@@ -53,12 +53,21 @@ export {
   registerLiveStream,
   PEER_STALE_AFTER_MS,
   STREAM_BUDGET_WARN_AT,
+  // Yield-on-contention thresholds — exported so a consumer can reason about
+  // (and a test assert) the line it will be asked to step aside at.
+  STREAM_YIELD_AT,
+  STREAM_RESUME_UNDER,
+  YIELD_COOLDOWN_MS,
 } from './client/stream-registry';
 export type {
   BudgetChannel,
   LiveStreamRecord,
+  RegisterStreamOptions,
   StreamBudgetSnapshot,
 } from './client/stream-registry';
+// Resume cursor carried in the stream URL — shared by the client that writes
+// it and the server that reads it, so the two spellings cannot drift.
+export { RESUME_CURSOR_PARAM, withResumeCursor } from './wire/resume-cursor';
 export type {
   ResilientEventSource,
   ResilientEventSourceOptions,

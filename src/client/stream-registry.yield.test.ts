@@ -220,6 +220,78 @@ describe('coming back', () => {
   });
 });
 
+/**
+ * END-TO-END WIRING. The blocks above exercise the registry directly, which
+ * would keep passing even if nothing ever called it — the dead-code failure
+ * mode. These drive the real `createResilientEventSource` and assert the
+ * socket actually closes and reopens.
+ */
+describe('resilient-event-source opts in', () => {
+  class FakeEventSource {
+    static instances: FakeEventSource[] = [];
+    readonly url: string;
+    closed = false;
+    readyState = 0;
+    constructor(u: string) { this.url = u; FakeEventSource.instances.push(this); }
+    addEventListener() { /* the wrapper only needs construction + close here */ }
+    close() { this.closed = true; this.readyState = 2; }
+  }
+
+  /** Both modules come from ONE module graph, so they share a registry realm. */
+  async function loadRealmWithClient() {
+    vi.resetModules();
+    FakeEventSource.instances = [];
+    const registry = await import('./stream-registry');
+    registry._setBudgetChannelFactory(() => null);
+    const client = await import('./resilient-event-source');
+    return { registry, client };
+  }
+
+  it('closes the socket when the origin contends, and reopens when it clears', async () => {
+    const { registry, client } = await loadRealmWithClient();
+    const handle = client.createResilientEventSource({
+      url: url('stream'),
+      handlers: {},
+      eventSourceCtor: FakeEventSource as never,
+      yieldOnContention: true,
+    });
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    const fillers: Array<() => void> = [];
+    for (let i = 0; i < registry.STREAM_YIELD_AT - 1; i++) {
+      fillers.push(registry.registerLiveStream(url(`f${i}`)));
+    }
+
+    // Yielded: socket closed, slot released, wrapper parked at idle.
+    expect(FakeEventSource.instances[0]!.closed).toBe(true);
+    expect(handle.status).toBe('idle');
+    expect(registry.countLiveStreamsForHost(HOST)).toBe(registry.STREAM_YIELD_AT - 1);
+
+    while (fillers.length) fillers.pop()!();
+
+    // Invited back: a NEW EventSource, i.e. the stream genuinely resumed
+    // rather than merely being forgotten.
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(handle.status).toBe('connecting');
+    handle.close();
+  });
+
+  it('NEGATIVE CONTROL: without yieldOnContention the socket is never touched', async () => {
+    const { registry, client } = await loadRealmWithClient();
+    const handle = client.createResilientEventSource({
+      url: url('stream'),
+      handlers: {},
+      eventSourceCtor: FakeEventSource as never,
+      // yieldOnContention omitted — the default every existing caller gets.
+    });
+    for (let i = 0; i < registry.STREAM_YIELD_AT + 2; i++) registry.registerLiveStream(url(`f${i}`));
+
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(FakeEventSource.instances[0]!.closed).toBe(false);
+    handle.close();
+  });
+});
+
 describe('cross-realm arbitration', () => {
   /**
    * POSITIVE/NEGATIVE CONTROL PAIR. The same scenario runs with the transport

@@ -113,12 +113,26 @@ function localCountsByHost(): Record<string, number> {
 }
 
 function announce(): void {
-  channel?.post({ t: 'announce', realm: REALM_ID, counts: localCountsByHost() });
+  // `candidates` rides along with the counts so yield arbitration needs no
+  // extra round-trip: every realm learns every other realm's best yieldable
+  // stream at exactly the moments the budget is already being restated.
+  channel?.post({
+    t: 'announce',
+    realm: REALM_ID,
+    counts: localCountsByHost(),
+    candidates: localCandidatesByHost(),
+  });
 }
 
 function onBudgetMessage(raw: unknown): void {
   if (!raw || typeof raw !== 'object') return;
-  const msg = raw as { t?: unknown; realm?: unknown; counts?: unknown };
+  const msg = raw as {
+    t?: unknown;
+    realm?: unknown;
+    counts?: unknown;
+    candidates?: unknown;
+    host?: unknown;
+  };
   if (typeof msg.realm !== 'string' || msg.realm === REALM_ID) return;
 
   if (msg.t === 'bye') {
@@ -130,13 +144,28 @@ function onBudgetMessage(raw: unknown): void {
     announce();
     return;
   }
+  if (msg.t === 'yield-request') {
+    // A peer hit the line. Every realm evaluates the SAME total order and only
+    // the owner of the globally best candidate actually yields, so this is a
+    // broadcast rather than an addressed command.
+    if (typeof msg.host === 'string') considerYield(msg.host);
+    return;
+  }
   if (msg.t === 'announce') {
     const counts = (msg.counts ?? {}) as Record<string, number>;
-    peers.set(msg.realm, { countsByHost: { ...counts }, lastSeenMs: Date.now() });
+    const candidates = (msg.candidates ?? {}) as Record<string, CandidateWire>;
+    peers.set(msg.realm, {
+      countsByHost: { ...counts },
+      candidatesByHost: { ...candidates },
+      lastSeenMs: Date.now(),
+    });
     // A peer's streams can push US over the line even though nothing changed
     // locally — that is the whole class of starvation this fix exists to see.
     for (const host of new Set([...Object.keys(counts), ...Object.keys(localCountsByHost())])) {
       maybeWarnForHost(host);
+      // A peer RELEASING streams is also how pressure clears for a parked
+      // consumer of ours; nothing local fires in that case.
+      maybeInviteResume(host);
     }
   }
 }
@@ -272,15 +301,240 @@ function maybeWarnForHost(host: string): void {
   );
 }
 
+/* -------------------------------------------------------------------------
+ * Yield on contention (WI-2141694).
+ *
+ * Counting the pool told us we were starving; it did not stop the starving.
+ * This is the acting half — and its shape is forced by two measurements, not
+ * by taste:
+ *
+ * 1. THE TRIGGER MUST BE PROACTIVE. Measured 2026-09-02: at the per-origin cap
+ *    the next request does NOT error. No `onerror`, no timeout — it queues
+ *    silently and indefinitely. There is therefore no failure event to react
+ *    to, and a reactive design (retry-on-error, timeout-and-recover) would
+ *    have looked correct and never fired once. We act off the budget snapshot
+ *    at REGISTRATION, which is the moment the total is about to matter.
+ *
+ * 2. THE VICTIM MUST BE CHOSEN CROSS-REALM. Measured the same day: a realm
+ *    holding ZERO streams was fully starved by streams in sibling iframes, and
+ *    closing one in a CHILD realm freed the parent in 31ms. A registry that
+ *    only ever yielded its own streams would sit blocked while the stream that
+ *    actually needed to go lived one document over.
+ *
+ * ── WHY THIS MODULE NEVER PICKS A VICTIM ON ITS OWN ────────────────────────
+ * `libs/generic/sse` is domain-free: it cannot know that the chat pane matters
+ * more than a background poller. So a stream is yieldable ONLY if its consumer
+ * passed `onYieldRequested`, and consumers rank themselves with `priority`.
+ * No callback ⇒ never yielded. That default is what keeps this change
+ * inert for every existing caller.
+ *
+ * ⚠ The visibility-pause precedent proves the pause/resume MECHANISM works; it
+ * does NOT license yielding anything. Visibility-pause fires when nobody is
+ * watching. A contention-yield can pause a stream the user is looking at, so
+ * data arrives late on a VISIBLE pane. That asymmetry is exactly why priority
+ * is load-bearing and why "just drop the oldest" is the wrong rule.
+ *
+ * ── ARBITRATION WITHOUT A NEGOTIATION ROUND-TRIP ───────────────────────────
+ * N realms must not all yield for one contended slot. Rather than a
+ * request/offer/command handshake (which needs a collection window, i.e. a
+ * timer this module deliberately does not have), every realm PUBLISHES its
+ * best yieldable candidate on the announce it already sends. Each realm can
+ * then compute the SAME global winner from the SAME data by a total order —
+ * (priority, openedAtMs, realmId) — and only the realm that owns the winner
+ * acts. Ties cannot be split differently by different realms because realmId
+ * makes the order total.
+ *
+ * The residual race is a divergent peer table, which can over-yield by one.
+ * The cooldown below bounds it; hysteresis (yield at 5, invite back under 3)
+ * stops a yielded stream re-registering straight into another yield.
+ * ---------------------------------------------------------------------- */
+
+/** Origin-wide standing streams at which we start yielding. Above the warn line. */
+export const STREAM_YIELD_AT = 5;
+
+/**
+ * Invite parked streams back only once the origin is comfortably clear.
+ * The GAP to {@link STREAM_YIELD_AT} is the hysteresis: resuming at the yield
+ * line would re-trigger contention on the next registration and oscillate.
+ */
+export const STREAM_RESUME_UNDER = 3;
+
+/** Minimum spacing between yields for one host, so a burst cannot cascade. */
+export const YIELD_COOLDOWN_MS = 5_000;
+
+/** Consumer-supplied policy. Absent `onYieldRequested` ⇒ this stream is never yielded. */
+export interface RegisterStreamOptions {
+  /**
+   * Higher survives longer. Default 0. Compared only against other streams of
+   * the SAME origin, so callers need no global scale — just an ordering.
+   */
+  priority?: number;
+  /**
+   * Release the socket NOW; contention was detected. The consumer is expected
+   * to close its transport (which calls the unregister fn) and wait for
+   * {@link RegisterStreamOptions.onResumeAllowed}. Throwing is swallowed.
+   */
+  onYieldRequested?: () => void;
+  /** Pressure has cleared — safe to reconnect. Throwing is swallowed. */
+  onResumeAllowed?: () => void;
+}
+
+interface YieldableEntry {
+  id: number;
+  host: string;
+  priority: number;
+  openedAtMs: number;
+  onYieldRequested: () => void;
+  onResumeAllowed?: () => void;
+}
+
+/** Yield policy for live streams that opted in, keyed by the same id as `live`. */
+const yieldable = new Map<number, YieldableEntry>();
+
+/** Consumers that yielded and are waiting to be invited back, oldest first. */
+const parked: Array<{ host: string; yieldedAtMs: number; onResumeAllowed?: () => void }> = [];
+
+/** Last yield per host, for {@link YIELD_COOLDOWN_MS}. */
+const lastYieldAtMs = new Map<string, number>();
+
+/** A realm's best yieldable stream for one host, as published on the wire. */
+interface CandidateWire {
+  /** priority */ p: number;
+  /** openedAtMs */ o: number;
+}
+
+/** This realm's best (most-yieldable) candidate per host — lowest priority, then oldest. */
+function localCandidatesByHost(): Record<string, CandidateWire> {
+  const out: Record<string, CandidateWire> = {};
+  for (const e of yieldable.values()) {
+    const cur = out[e.host];
+    if (!cur || e.priority < cur.p || (e.priority === cur.p && e.openedAtMs < cur.o)) {
+      out[e.host] = { p: e.priority, o: e.openedAtMs };
+    }
+  }
+  return out;
+}
+
+/** The local entry matching {@link localCandidatesByHost} for `host`. */
+function bestLocalYieldable(host: string): YieldableEntry | null {
+  let best: YieldableEntry | null = null;
+  for (const e of yieldable.values()) {
+    if (e.host !== host) continue;
+    if (
+      !best
+      || e.priority < best.priority
+      || (e.priority === best.priority && e.openedAtMs < best.openedAtMs)
+    ) {
+      best = e;
+    }
+  }
+  return best;
+}
+
+/**
+ * Which realm owns the globally most-yieldable stream for `host`.
+ *
+ * Total order — priority, then openedAtMs, then realmId — so every realm
+ * computing this over the same peer table reaches the same answer, which is
+ * what removes the need for a negotiation round-trip. `null` ⇒ nothing
+ * anywhere has opted in.
+ */
+function yieldWinnerRealm(host: string): string | null {
+  pruneStalePeers(Date.now());
+  let winner: { realm: string; p: number; o: number } | null = null;
+  const consider = (realm: string, c: CandidateWire) => {
+    if (
+      !winner
+      || c.p < winner.p
+      || (c.p === winner.p && c.o < winner.o)
+      || (c.p === winner.p && c.o === winner.o && realm < winner.realm)
+    ) {
+      winner = { realm, p: c.p, o: c.o };
+    }
+  };
+  const mine = localCandidatesByHost()[host];
+  if (mine) consider(REALM_ID, mine);
+  for (const [realm, p] of peers) {
+    const c = p.candidatesByHost?.[host];
+    if (c) consider(realm, c);
+  }
+  return winner ? (winner as { realm: string }).realm : null;
+}
+
+/**
+ * Yield one stream for `host` IF this realm owns the globally best candidate.
+ *
+ * Every realm runs this on a `yield-request`; the total order above ensures at
+ * most one of them finds itself the winner.
+ */
+function considerYield(host: string): void {
+  const now = Date.now();
+  const last = lastYieldAtMs.get(host) ?? 0;
+  if (now - last < YIELD_COOLDOWN_MS) return;
+  if (countStreamsForHostAllRealms(host) < STREAM_YIELD_AT) return;
+  if (yieldWinnerRealm(host) !== REALM_ID) return;
+
+  const victim = bestLocalYieldable(host);
+  if (!victim) return;
+
+  lastYieldAtMs.set(host, now);
+  // Park BEFORE calling out: the callback synchronously closes the transport,
+  // which re-enters this module through the unregister fn.
+  parked.push({
+    host,
+    yieldedAtMs: now,
+    onResumeAllowed: victim.onResumeAllowed,
+  });
+  yieldable.delete(victim.id);
+  try {
+    victim.onYieldRequested();
+  } catch {
+    /* a consumer's callback must never break the registry */
+  }
+}
+
+/**
+ * Invite ONE parked consumer back once the origin is clear.
+ *
+ * One at a time on purpose: releasing every parked stream at once would
+ * re-contend the pool in a single tick, which is the stampede the hysteresis
+ * gap exists to prevent. The next unregister invites the next one.
+ */
+function maybeInviteResume(host: string): void {
+  if (countStreamsForHostAllRealms(host) >= STREAM_RESUME_UNDER) return;
+  const idx = parked.findIndex((p) => p.host === host);
+  if (idx < 0) return;
+  const [entry] = parked.splice(idx, 1);
+  try {
+    entry?.onResumeAllowed?.();
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * Register a stream that now holds a connection. Returns its unregister fn —
  * call it whenever the socket is released (close, visibility/bfcache pause, a
  * zombie rebuild), so the count tracks REAL socket usage rather than intent.
+ *
+ * `opts.onYieldRequested` opts this stream in to yield-on-contention; without
+ * it the stream is counted but never asked to step aside.
  */
-export function registerLiveStream(url: string): () => void {
+export function registerLiveStream(url: string, opts?: RegisterStreamOptions): () => void {
   const id = nextId++;
   const host = hostOf(url);
-  live.set(id, { id, url, host, openedAtMs: Date.now() });
+  const openedAtMs = Date.now();
+  live.set(id, { id, url, host, openedAtMs });
+  if (opts?.onYieldRequested) {
+    yieldable.set(id, {
+      id,
+      host,
+      priority: opts.priority ?? 0,
+      openedAtMs,
+      onYieldRequested: opts.onYieldRequested,
+      onResumeAllowed: opts.onResumeAllowed,
+    });
+  }
   ensureChannel();
   // A registration is exactly when the origin-wide total is about to matter:
   // publish what we now hold, and ask peers to restate theirs so the figure we
@@ -288,13 +542,28 @@ export function registerLiveStream(url: string): () => void {
   channel?.post({ t: 'query', realm: REALM_ID });
   announce();
   maybeWarnForHost(host);
+  maybeRequestYield(host);
   return () => {
     live.delete(id);
+    yieldable.delete(id);
     announce();
     // Re-arm the warning once the host drops back under the line, so a later
     // regression warns again instead of being swallowed by the first one.
     if (countStreamsForHostAllRealms(host) < STREAM_BUDGET_WARN_AT) warnedHosts.delete(host);
+    maybeInviteResume(host);
   };
+}
+
+/**
+ * Ask the origin to free a slot, if it is contended.
+ *
+ * Broadcast first, then evaluate locally: peers and this realm run the same
+ * `considerYield`, and only the owner of the globally best candidate acts.
+ */
+function maybeRequestYield(host: string): void {
+  if (countStreamsForHostAllRealms(host) < STREAM_YIELD_AT) return;
+  channel?.post({ t: 'yield-request', realm: REALM_ID, host });
+  considerYield(host);
 }
 
 /** Test seam — drop all registry state, including cross-realm accounting. */

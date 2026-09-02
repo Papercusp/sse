@@ -83,6 +83,8 @@ export interface BudgetChannel {
 
 interface PeerRealm {
   countsByHost: Record<string, number>;
+  /** That realm's best yieldable stream per host — the yield-arbitration input. */
+  candidatesByHost?: Record<string, { p: number; o: number }>;
   lastSeenMs: number;
 }
 
@@ -415,11 +417,20 @@ function localCandidatesByHost(): Record<string, CandidateWire> {
   return out;
 }
 
-/** The local entry matching {@link localCandidatesByHost} for `host`. */
-function bestLocalYieldable(host: string): YieldableEntry | null {
+/**
+ * The local entry matching {@link localCandidatesByHost} for `host`.
+ *
+ * `excludeId` guards a re-entrancy hazard: the evaluation runs INSIDE
+ * `registerLiveStream`, so the stream being registered could be picked as its
+ * own victim — and at that moment its consumer does not yet hold the
+ * unregister fn, so the close it performs could not remove it from `live`.
+ * That leaks a phantom stream into the very count this module exists to keep
+ * honest. A stream becomes eligible on the NEXT contention event instead.
+ */
+function bestLocalYieldable(host: string, excludeId?: number): YieldableEntry | null {
   let best: YieldableEntry | null = null;
   for (const e of yieldable.values()) {
-    if (e.host !== host) continue;
+    if (e.host !== host || e.id === excludeId) continue;
     if (
       !best
       || e.priority < best.priority
@@ -467,14 +478,14 @@ function yieldWinnerRealm(host: string): string | null {
  * Every realm runs this on a `yield-request`; the total order above ensures at
  * most one of them finds itself the winner.
  */
-function considerYield(host: string): void {
+function considerYield(host: string, excludeId?: number): void {
   const now = Date.now();
   const last = lastYieldAtMs.get(host) ?? 0;
   if (now - last < YIELD_COOLDOWN_MS) return;
   if (countStreamsForHostAllRealms(host) < STREAM_YIELD_AT) return;
   if (yieldWinnerRealm(host) !== REALM_ID) return;
 
-  const victim = bestLocalYieldable(host);
+  const victim = bestLocalYieldable(host, excludeId);
   if (!victim) return;
 
   lastYieldAtMs.set(host, now);
@@ -542,7 +553,7 @@ export function registerLiveStream(url: string, opts?: RegisterStreamOptions): (
   channel?.post({ t: 'query', realm: REALM_ID });
   announce();
   maybeWarnForHost(host);
-  maybeRequestYield(host);
+  maybeRequestYield(host, id);
   return () => {
     live.delete(id);
     yieldable.delete(id);
@@ -560,10 +571,10 @@ export function registerLiveStream(url: string, opts?: RegisterStreamOptions): (
  * Broadcast first, then evaluate locally: peers and this realm run the same
  * `considerYield`, and only the owner of the globally best candidate acts.
  */
-function maybeRequestYield(host: string): void {
+function maybeRequestYield(host: string, justRegisteredId?: number): void {
   if (countStreamsForHostAllRealms(host) < STREAM_YIELD_AT) return;
   channel?.post({ t: 'yield-request', realm: REALM_ID, host });
-  considerYield(host);
+  considerYield(host, justRegisteredId);
 }
 
 /** Test seam — drop all registry state, including cross-realm accounting. */
@@ -572,6 +583,9 @@ export function _resetStreamRegistry(): void {
   warnedHosts.clear();
   nextId = 1;
   peers.clear();
+  yieldable.clear();
+  parked.length = 0;
+  lastYieldAtMs.clear();
   try {
     channel?.close();
   } catch {

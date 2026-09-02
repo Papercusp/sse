@@ -100,17 +100,36 @@ export interface ResilientEventSourceOptions {
    * (WI-2141694). Default **false**.
    *
    * ⚠ DEFAULT-OFF IS A CORRECTNESS DECISION, NOT TIMIDITY. A yield closes the
-   * socket and reopens it later carrying the resume cursor — which recovers
-   * everything missed ONLY on endpoints that serve `replay` from a ring
-   * buffer. Against an endpoint with no replay, the resumed stream starts at
-   * "now" and whatever was emitted while parked is simply gone. This wrapper
-   * cannot tell the two apart: `replay` is a server-side option it never sees.
-   * So the caller — which knows its endpoint — opts in. Turning this on by
-   * default would trade a visible hang for silent data loss, which is the
-   * same class of bug the resume cursor above exists to remove.
+   * socket and reopens it later carrying the resume cursor. The parked
+   * interval is recovered ONLY if a fresh connect re-establishes full state;
+   * otherwise the resumed stream starts at "now" and what was emitted while
+   * parked is simply gone. This wrapper cannot tell the two apart — what an
+   * endpoint does on connect is a server-side property it never sees — so the
+   * caller, which knows its endpoint, opts in. Turning this on by default
+   * would trade a visible hang for silent data loss, the same class of bug the
+   * resume cursor above exists to remove.
    *
-   * Opt in for background/low-value streams against replay-backed endpoints;
-   * leave off for anything whose gap a user would notice.
+   * SAFE TO ENABLE when ANY of these holds. They are equivalent for this
+   * purpose, and reading the first as the ONLY one is a real trap: the
+   * always-present streams that actually exhaust the connection pool are
+   * mostly (2), so a replay-only rule leaves the pool-exhaustion symptom
+   * unfixable while looking rigorous.
+   *   1. the endpoint serves `replay` from a ring buffer filtered by
+   *      Last-Event-ID (e.g. GET /api/flags/stream);
+   *   2. the endpoint emits a FULL BASELINE on connect, so reconnecting
+   *      re-syncs by construction (e.g. GET /api/operator/state-snapshot,
+   *      whose per-run snapshot is documented as "the baseline on connect");
+   *   3. the handlers only TRIGGER A REFETCH rather than accumulating stream
+   *      state, so a gap costs at most one stale interval.
+   *
+   * Leave it off for a stream that accumulates deltas with no re-baseline, and
+   * for anything whose gap a user would notice.
+   *
+   * Note for connectivity-reporting callers: a yield does NOT surface as an
+   * error. `yieldForContention` closes the socket directly and never invokes
+   * `onError` (EventSource.close() emits no error event), so an `onError` that
+   * reports "connection lost" cannot be tripped by a deliberate yield; only
+   * `onStatusChange('idle')` fires. Pinned by resilient-event-source tests.
    */
   yieldOnContention?: boolean;
   /**

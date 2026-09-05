@@ -34,6 +34,12 @@ export type ResilientEventSourceStatus = 'idle' | 'connecting' | 'open' | 'faili
 
 export interface ResilientEventSourceOptions {
   url: string;
+  /**
+   * Resume cursor inherited from an outer owner/election wrapper that had to
+   * destroy the previous EventSource instance. The first connection carries
+   * it through the same URL cursor used by every later reconnect.
+   */
+  initialLastEventId?: string | null;
   /** Send credentials (cookies). Default false. */
   withCredentials?: boolean;
   /** Initial backoff ms. Default 1_000. */
@@ -211,7 +217,7 @@ export function createResilientEventSource(opts: ResilientEventSourceOptions): R
 
   let url = opts.url;
   let status: ResilientEventSourceStatus = 'idle';
-  let lastEventId: string | null = null;
+  let lastEventId: string | null = opts.initialLastEventId || null;
 
   let es: EventSource | null = null;
   let backoffMs = cfg.initialBackoffMs;

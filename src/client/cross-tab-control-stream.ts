@@ -320,7 +320,7 @@ export function createCrossTabControlStream(
   let ownerTabId: string | null = null;
   let ownerEpoch: string | null = null;
   let ownerLeaseUntil = 0;
-  let lastEventId: string | null = null;
+  let lastEventId: string | null = opts.initialLastEventId || null;
   let coordinationAvailable = false;
   let channel: ControlBroadcastChannel | null = null;
   let channelListener: ((event: { data: unknown }) => void) | null = null;
@@ -463,6 +463,7 @@ export function createCrossTabControlStream(
 
   const stopPhysicalSource = (): void => {
     const current = source;
+    if (current?.lastEventId) lastEventId = current.lastEventId;
     source = null;
     stoppingSource = true;
     try { current?.close(); } catch { /* close is idempotent */ }
@@ -547,6 +548,7 @@ export function createCrossTabControlStream(
     const underlying = createResilientEventSource({
       ...opts,
       url,
+      initialLastEventId: lastEventId,
       handlers: wrappedHandlers,
       // Coordinated ownership handles visibility itself.  In the standalone
       // profile the underlying resilient source owns the normal pause timer.
@@ -922,6 +924,7 @@ export function createCrossTabControlStream(
     setUrl(next: string) {
       if (next === url) return;
       url = next;
+      lastEventId = null;
       if (source) source.setUrl(next);
     },
     reconnect() {

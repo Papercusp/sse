@@ -114,6 +114,17 @@ describe('createResilientEventSource — happy path', () => {
     expect(handle.lastEventId).toBe('42');
   });
 
+  it('carries an inherited resume cursor on the first physical connection', () => {
+    const handle = createResilientEventSource({
+      url: 'http://x/sse?queries=plans.list',
+      initialLastEventId: '41',
+      handlers: {},
+      eventSourceCtor: FakeEventSource as any,
+    });
+    expect(new URL(latest().url).searchParams.get('lastEventId')).toBe('41');
+    expect(handle.lastEventId).toBe('41');
+  });
+
   it('user-handler error does NOT tear down the stream', () => {
     const handle = createResilientEventSource({
       url: 'http://x/sse',

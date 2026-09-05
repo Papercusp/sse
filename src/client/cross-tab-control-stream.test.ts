@@ -251,6 +251,30 @@ describe('cross-tab control stream election', () => {
 });
 
 describe('cross-tab control stream fallback and lifecycle', () => {
+  it('carries the last event id when a hidden owner recreates its physical source', async () => {
+    const doc = fakeDocument();
+    const stream = makeStream('a', doc, { invalidate: () => {} });
+    await settle();
+
+    FakeEventSource.instances[0]!.fireOpen();
+    FakeEventSource.instances[0]!.fire('invalidate', '{"name":"x"}', '17');
+    expect(stream.lastEventId).toBe('17');
+
+    doc.setVisibility('hidden');
+    vi.advanceTimersByTime(20);
+    await Promise.resolve();
+    expect(stream.role).toBe('paused');
+
+    doc.setVisibility('visible');
+    vi.advanceTimersByTime(60);
+    await Promise.resolve();
+
+    expect(stream.role).toBe('owner');
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(new URL(FakeEventSource.instances[1]!.url, 'http://x').searchParams.get('lastEventId')).toBe('17');
+    expect(stream.lastEventId).toBe('17');
+  });
+
   it('uses one standalone source per tab when coordination is unavailable', () => {
     const original = (globalThis as any).BroadcastChannel;
     (globalThis as any).BroadcastChannel = undefined;

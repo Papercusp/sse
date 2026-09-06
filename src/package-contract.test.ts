@@ -33,9 +33,13 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(
   readFileSync(resolve(packageRoot, 'package.json'), 'utf8'),
 ) as PackageManifest;
-const tsconfig = JSON.parse(
-  readFileSync(resolve(packageRoot, 'tsconfig.json'), 'utf8'),
-) as TypeScriptConfig;
+// SSE_CONTRACT_TSCONFIG lets a falsifiability probe point this contract at a
+// MUTATED COPY of tsconfig.json (scripts/mutation-probe.sh copy-out mode) without
+// touching the tracked file; it defaults to the real package tsconfig.
+const tsconfigPath = process.env.SSE_CONTRACT_TSCONFIG?.trim()
+  ? resolve(process.env.SSE_CONTRACT_TSCONFIG)
+  : resolve(packageRoot, 'tsconfig.json');
+const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8')) as TypeScriptConfig;
 
 beforeAll(() => {
   execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], {
